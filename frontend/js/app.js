@@ -35,6 +35,50 @@ async function reloadLeads() {
   renderList();
 }
 
+function getLeadPayloadForUpdate(l, overrides = {}) {
+  return {
+    name: l.name,
+    phone: l.phone || '',
+    avito_link: l.avito_link ?? l.link ?? '',
+    address: l.address || '',
+    object_type: l.object_type ?? l.obj ?? '',
+    budget: l.budget,
+    status: l.status,
+    last_contact: l.last_contact ?? l.date ?? '',
+    comment: l.comment || '',
+    ...overrides,
+  };
+}
+
+function escapeHtml(s) {
+  if (!s) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function startEditComment(id) {
+  const l = leads.find(x => x.id === id);
+  if (!l) return;
+  const wrap = document.querySelector('.ai-comment-editable[data-lead-id="' + id + '"]');
+  if (!wrap || wrap.querySelector('textarea')) return;
+  const current = l.comment || '';
+  wrap.innerHTML = '<textarea class="comment-edit-ta" rows="3"></textarea>';
+  const ta = wrap.querySelector('textarea');
+  ta.value = current;
+  ta.focus();
+  ta.addEventListener('blur', async function onBlur() {
+    ta.removeEventListener('blur', onBlur);
+    const newComment = ta.value.trim();
+    const payload = getLeadPayloadForUpdate(l, { comment: newComment });
+    const updated = await apiUpdateLead(id, payload);
+    if (updated) l.comment = newComment;
+    renderDetail();
+  });
+}
+
 function toggleNewLeadForm() {
   const wrap = document.getElementById('newLeadFormWrap');
   if (wrap.style.display === 'none') {
@@ -81,6 +125,39 @@ async function submitNewLeadForm(e) {
 
 function cancelNewLeadForm() {
   document.getElementById('newLeadFormWrap').style.display = 'none';
+}
+
+function toggleStatusDropdown(e) {
+  e.stopPropagation();
+  const wrap = document.getElementById('statusDropdown');
+  const menu = document.getElementById('statusDropdownMenu');
+  const isOpen = menu && menu.style.display === 'block';
+  document.querySelectorAll('.status-dropdown-menu').forEach(m => { m.style.display = 'none'; });
+  if (!isOpen && menu) {
+    menu.style.display = 'block';
+    setTimeout(() => {
+      const close = () => {
+        menu.style.display = 'none';
+        document.removeEventListener('click', close);
+      };
+      document.addEventListener('click', close);
+    }, 0);
+  }
+}
+
+async function selectStatus(id, newStatus, e) {
+  e.stopPropagation();
+  const menu = document.getElementById('statusDropdownMenu');
+  if (menu) menu.style.display = 'none';
+  const l = leads.find(x => x.id === id);
+  if (!l) return;
+  const payload = getLeadPayloadForUpdate(l, { status: newStatus });
+  const updated = await apiUpdateLead(id, payload);
+  if (!updated) return;
+  l.status = newStatus;
+  renderDetail();
+  renderList();
+  updateStats();
 }
 
 async function deleteLead(id) {
@@ -166,7 +243,7 @@ function updateStats() {
 
   // alerts — hot with old date or no comment
   const alerts = leads.filter(l => getStatusGroup(l.status)==='hot' && (!l.comment || l.comment===''));
-  const noReply = leads.filter(l => getStatusGroup(l.status)==='hot' && l.msgs.length > 0 && !l.msgs[l.msgs.length-1].out);
+  const noReply = leads.filter(l => getStatusGroup(l.status)==='hot' && (l.msgs && l.msgs.length > 0 && !l.msgs[l.msgs.length-1].out));
   document.getElementById('alertsList').innerHTML = [
     ...noReply.slice(0,3).map(l => `
       <div class="alert-item" onclick="openLead(${l.id})">
@@ -194,7 +271,7 @@ function renderList() {
   el.innerHTML = filtered.map(l => {
     const si = getStatusInfo(l.status);
     const bi = BUDGET[l.budget];
-    const hasNewMsg = l.msgs.length > 0 && !l.msgs[l.msgs.length-1].out;
+    const hasNewMsg = (l.msgs && l.msgs.length > 0 && !l.msgs[l.msgs.length-1].out);
     return `<div class="lead-card ${si.side} ${activeId===l.id?'active':''}" id="lc-${l.id}" onclick="openLead(${l.id})">
       ${hasNewMsg ? '<div style="position:absolute;top:12px;right:12px;width:7px;height:7px;border-radius:50%;background:var(--hot);animation:pulse 1.5s infinite"></div>' : ''}
       <div class="lc-row">
@@ -255,18 +332,25 @@ function renderDetail() {
       <div class="d-actions">
         ${l.phone ? `<button class="dbtn">📞 ${l.phone}</button>` : ''}
         <a href="${l.link}" target="_blank" style="text-decoration:none"><button class="dbtn">🔗 Авито</button></a>
-        <button class="dbtn" onclick="cycleStatus(${l.id})">Статус →</button>
+        <div class="status-dropdown" id="statusDropdown">
+          <button type="button" class="dbtn" onclick="toggleStatusDropdown(event)">${si.label} ▼</button>
+          <div class="status-dropdown-menu" id="statusDropdownMenu">
+            ${Object.entries(CONFIG.statuses).map(([k, v]) => `<button type="button" class="status-dropdown-item" data-status="${k}" onclick="selectStatus(${l.id}, '${k}', event)">${v.label}</button>`).join('')}
+          </div>
+        </div>
         <button class="dbtn primary" onclick="switchTab('msgs')">💬 Ответить</button>
         <button type="button" class="dbtn" onclick="deleteLead(${l.id})" style="color:var(--hot);border-color:rgba(255,77,109,0.5)">Удалить лид</button>
       </div>
     </div>
     <div class="dtabs">
       <div class="dtab ${activeTab==='overview'?'active':''}" onclick="switchTab('overview')">🗂 Обзор</div>
-      <div class="dtab ${activeTab==='msgs'?'active':''}" onclick="switchTab('msgs')">💬 Переписка (${l.msgs.length})</div>
+      <div class="dtab ${activeTab==='msgs'?'active':''}" onclick="switchTab('msgs')">💬 Переписка</div>
       <div class="dtab ${activeTab==='calls'?'active':''}" onclick="switchTab('calls')">📞 Звонки (${l.calls.length})</div>
     </div>
     <div class="tab-body fade-in" id="tabBody">${renderTab(l)}</div>
   `;
+  if (activeTab === 'overview') setTimeout(() => loadNotesIntoFeed(activeId), 0);
+  if (activeTab === 'msgs') setTimeout(() => loadMessagesIntoFeed(activeId), 0);
 }
 
 function switchTab(tab) {
@@ -281,6 +365,49 @@ function switchTab(tab) {
   const tb = document.getElementById('tabBody');
   tb.innerHTML = renderTab(l);
   tb.classList.remove('fade-in'); void tb.offsetWidth; tb.classList.add('fade-in');
+  if (tab === 'overview') loadNotesIntoFeed(activeId);
+  if (tab === 'msgs') setTimeout(() => loadMessagesIntoFeed(activeId), 0);
+}
+
+async function loadNotesIntoFeed(leadId) {
+  const el = document.getElementById('notesList-' + leadId);
+  if (!el) return;
+  const notes = await apiGetNotes(leadId);
+  if (notes === null) { el.textContent = 'Ошибка загрузки'; return; }
+  if (!notes.length) { el.innerHTML = '<div class="notes-empty">Нет заметок</div>'; return; }
+  el.innerHTML = notes.map(n => {
+    const dt = formatNoteDate(n.created_at);
+    return `<div class="note-item" data-note-id="${n.id}">
+      <span class="note-date">${escapeHtml(dt)}</span>
+      <span class="note-text">${escapeHtml(n.text)}</span>
+      <button type="button" class="note-delete" onclick="deleteNote(${n.id}, ${leadId})" title="Удалить">×</button>
+    </div>`;
+  }).join('');
+}
+
+function formatNoteDate(createdAt) {
+  if (!createdAt) return '—';
+  const s = String(createdAt);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})/);
+  if (m) return `${m[3]}.${m[2]}.${m[1]} ${m[4]}:${m[5]}`;
+  return s;
+}
+
+async function addNote(leadId) {
+  const input = document.getElementById('noteInput-' + leadId);
+  if (!input) return;
+  const text = input.value.trim();
+  if (!text) return;
+  const created = await apiCreateNote(leadId, text);
+  if (!created) return;
+  input.value = '';
+  loadNotesIntoFeed(leadId);
+}
+
+async function deleteNote(noteId, leadId) {
+  const ok = await apiDeleteNote(noteId);
+  if (!ok) return;
+  loadNotesIntoFeed(leadId);
 }
 
 function renderTab(l) {
@@ -294,7 +421,7 @@ function renderTab(l) {
 function renderOverview(l) {
   const si = getStatusInfo(l.status);
   const bi = BUDGET[l.budget];
-  const lastMsg = l.msgs.length ? l.msgs[l.msgs.length-1] : null;
+  const lastMsg = (l.msgs && l.msgs.length) ? l.msgs[l.msgs.length-1] : null;
   const tone = getStatusGroup(l.status)==='hot' ? 'Горячий, готов к сотрудничеству' :
                getStatusGroup(l.status)==='client' ? 'Клиент, договорённость достигнута' :
                getStatusGroup(l.status)==='drain' ? 'Слив — не конвертировался' :
@@ -311,9 +438,17 @@ function renderOverview(l) {
         <div class="ai-field"><div class="aif-label">Последний контакт</div><div class="aif-val">${l.date||'—'}</div></div>
         <div class="ai-field"><div class="aif-label">Тон клиента</div><div class="aif-val">${tone}</div></div>
       </div>
-      ${l.comment ? `<div class="ai-comment">💬 <b>Ваш комментарий:</b> ${l.comment}</div>` : ''}
-      ${lastMsg ? `<div class="ai-comment" style="margin-top:8px">📩 <b>Последнее сообщение:</b> ${lastMsg.text}</div>` : ''}
+      ${lastMsg ? `<div class="ai-comment" style="margin-top:8px">📩 <b>Последнее сообщение:</b> ${escapeHtml(lastMsg.text)}</div>` : ''}
       <button class="dbtn" style="margin-top:10px;font-size:9px" onclick="">↺ Обновить из переписки</button>
+    </div>
+
+    <div class="notes-feed">
+      <div class="notes-feed-title">📝 Заметки</div>
+      <div class="notes-feed-add">
+        <input type="text" id="noteInput-${l.id}" class="notes-input" placeholder="Текст заметки..." onkeydown="if(event.key==='Enter')addNote(${l.id})">
+        <button type="button" class="dbtn primary" onclick="addNote(${l.id})">Добавить заметку</button>
+      </div>
+      <div id="notesList-${l.id}" class="notes-list">Загрузка...</div>
     </div>
 
     <div>
@@ -341,28 +476,329 @@ function renderOverview(l) {
 }
 
 // MESSAGES
+const MESSAGE_SOURCES = ['Авито', 'Телеграм', 'WhatsApp', 'Телефон'];
+
 function renderMsgs(l) {
+  const leadId = l.id;
+  const sourcesOpts = (CONFIG.messageSources || MESSAGE_SOURCES).map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
   return `
-    <div class="msg-thread">
-      ${l.msgs.length===0
-        ? `<div style="text-align:center;color:var(--muted);font-size:10px;padding:30px">Переписки пока нет</div>`
-        : l.msgs.map((m,i)=>`
-          <div class="tmsg ${m.out?'out':'in'}" style="animation-delay:${i*.04}s">
-            <div class="tmsg-av ${m.out?'me':'cli'}">${m.out?'Я':l.name[0]}</div>
-            <div class="tmsg-body">
-              <div class="tmsg-bubble">${m.text}</div>
-              <div class="tmsg-time">${m.time}</div>
-              ${m.src?`<div class="src-badge">📱 ${m.src}</div>`:''}
-            </div>
-          </div>`).join('')
-      }
+    <div id="messagesList-${leadId}" class="msg-thread messages-feed">Загрузка...</div>
+    <div class="msg-form-tabs">
+      <div class="msg-form-tab-row">
+        <button type="button" class="msg-form-tab active" data-msg-tab="write">Написать</button>
+        <button type="button" class="msg-form-tab" data-msg-tab="paste">Вставить текст</button>
+        <button type="button" class="msg-form-tab" data-msg-tab="telegram">Загрузить Телеграм</button>
+      </div>
+      <div class="msg-form-panel active" data-msg-panel="write">
+        <div class="msg-form-row">
+          <textarea id="msgText-${leadId}" class="msg-form-text" placeholder="Текст сообщения..." rows="2"></textarea>
+        </div>
+        <div class="msg-form-row">
+          <select id="msgSource-write-${leadId}" class="msg-form-select">${sourcesOpts}</select>
+          <button type="button" class="dbtn" onclick="sendMessageAs(${leadId}, 'in')">← Входящее</button>
+          <button type="button" class="dbtn primary" onclick="sendMessageAs(${leadId}, 'out')">Исходящее →</button>
+        </div>
+      </div>
+      <div class="msg-form-panel" data-msg-panel="paste">
+        <textarea id="msgPaste-${leadId}" class="msg-form-paste" placeholder="Вставьте переписку из Авито (строки с временем 14:21 или датой 19 декабря 2025 г. — разделители)..." rows="8"></textarea>
+        <div class="msg-form-row">
+          <select id="msgSource-paste-${leadId}" class="msg-form-select">${sourcesOpts}</select>
+          <button type="button" class="dbtn primary" onclick="importAvitoText(${leadId})">Импортировать</button>
+        </div>
+      </div>
+      <div class="msg-form-panel" data-msg-panel="telegram">
+        <div class="msg-telegram-drop" id="msgTelegramDrop-${leadId}"
+             onclick="document.getElementById('msgTelegramFile-${leadId}').click()"
+             ondragover="event.preventDefault();this.classList.add('drag')"
+             ondragleave="this.classList.remove('drag')"
+             ondrop="handleTelegramDrop(event, ${leadId})">
+          <input type="file" id="msgTelegramFile-${leadId}" accept=".html" class="msg-form-file" onchange="onTelegramFileSelected(${leadId}, this)">
+          <label for="msgTelegramFile-${leadId}" class="dbtn" onclick="event.stopPropagation()">Выбрать .html файл</label>
+          <span class="msg-telegram-drop-text">или перетащите файл сюда</span>
+        </div>
+        <div id="msgTelegramPreview-${leadId}" class="msg-telegram-preview" style="display:none">
+          <div class="msg-telegram-preview-body" id="msgTelegramPreviewBody-${leadId}"></div>
+          <button type="button" class="dbtn primary" onclick="doImportTelegramFromPreview(${leadId})">Импортировать</button>
+        </div>
+      </div>
     </div>
-    <div class="msg-input-area" style="margin-top:14px">
-      <textarea placeholder="Ответить клиенту..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg(${l.id})}"></textarea>
-      <button class="dbtn primary" onclick="sendMsg(${l.id})">→</button>
-    </div>
-    <div style="font-size:8px;color:var(--muted);margin-top:5px;text-align:center">Enter для отправки · Shift+Enter — перенос строки</div>
   `;
+}
+
+function initMsgFormTabs() {
+  document.querySelectorAll('.msg-form-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      const name = tab.dataset.msgTab;
+      document.querySelectorAll('.msg-form-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.msg-form-panel').forEach(p => p.classList.remove('active'));
+      tab.classList.add('active');
+      const panel = document.querySelector('.msg-form-panel[data-msg-panel="' + name + '"]');
+      if (panel) panel.classList.add('active');
+    });
+  });
+}
+
+async function loadMessagesIntoFeed(leadId) {
+  const el = document.getElementById('messagesList-' + leadId);
+  if (!el) return;
+  el.classList.add('messages-feed');
+  const list = await apiGetMessages(leadId);
+  if (list === null) { el.textContent = 'Ошибка загрузки'; return; }
+  if (!list.length) {
+    el.innerHTML = '<div class="messages-empty">Переписки пока нет</div>';
+    initMsgFormTabs();
+    return;
+  }
+  el.innerHTML = list.map(m => renderMessageItem(m, leadId)).join('');
+  el.scrollTop = el.scrollHeight;
+  initMsgFormTabs();
+}
+
+function renderMessageItem(m, leadId) {
+  const dt = formatMessageDate(m.created_at);
+  const dir = m.direction || 'unknown';
+  const isOut = dir === 'out';
+  const isIn = dir === 'in';
+  const isUnknown = dir === 'unknown';
+  let bubbleClass = 'msg-bubble';
+  if (isOut) bubbleClass += ' msg-bubble-out';
+  else if (isIn) bubbleClass += ' msg-bubble-in';
+  else bubbleClass += ' msg-bubble-unknown';
+  let alignClass = 'msg-row';
+  if (isOut) alignClass += ' msg-row-out';
+  else if (isIn) alignClass += ' msg-row-in';
+  else alignClass += ' msg-row-unknown';
+  const dirButtons = isUnknown
+    ? `<span class="msg-dir-btns">
+         <button type="button" class="msg-dir-btn" onclick="setMessageDirection(${m.id}, ${leadId}, 'in')" title="Клиент">← клиент</button>
+         <button type="button" class="msg-dir-btn" onclick="setMessageDirection(${m.id}, ${leadId}, 'out')" title="Я">я →</button>
+       </span>`
+    : '';
+  return `<div class="${alignClass}" data-msg-id="${m.id}">
+    <div class="${bubbleClass}">
+      <div class="msg-text">${escapeHtml(m.text)}</div>
+      ${dirButtons}
+      <div class="msg-meta">${escapeHtml(m.source)} · ${escapeHtml(dt)}</div>
+      <button type="button" class="msg-delete" onclick="deleteMessage(${m.id}, ${leadId})" title="Удалить">×</button>
+    </div>
+  </div>`;
+}
+
+function formatMessageDate(createdAt) {
+  if (!createdAt) return '—';
+  const s = String(createdAt);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})/);
+  if (m) return `${m[3]}.${m[2]}.${m[1]} ${m[4]}:${m[5]}`;
+  return s;
+}
+
+async function setMessageDirection(msgId, leadId, direction) {
+  const updated = await apiUpdateMessageDirection(msgId, direction);
+  if (!updated) return;
+  loadMessagesIntoFeed(leadId);
+}
+
+async function deleteMessage(msgId, leadId) {
+  const ok = await apiDeleteMessage(msgId);
+  if (!ok) return;
+  loadMessagesIntoFeed(leadId);
+}
+
+async function sendMessageAs(leadId, direction) {
+  const input = document.getElementById('msgText-' + leadId);
+  if (!input) return;
+  const text = input.value.trim();
+  if (!text) return;
+  const sourceEl = document.getElementById('msgSource-write-' + leadId);
+  const source = sourceEl ? sourceEl.value : 'Авито';
+  const created = await apiCreateMessage(leadId, { text, direction, source });
+  if (!created) return;
+  input.value = '';
+  await loadMessagesIntoFeed(leadId);
+  const listEl = document.getElementById('messagesList-' + leadId);
+  if (listEl) listEl.scrollTop = listEl.scrollHeight;
+}
+
+function parseAvitoPaste(text) {
+  const lines = text.split(/\r?\n/);
+  const messages = [];
+  let currentTime = '';
+  let currentDate = '';
+  const timeRe = /^\s*(\d{1,2}):(\d{2})(?::(\d{2}))?\s*$/;
+  const dateRe = /^\s*(\d{1,2})\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\s+(\d{4})\s+г\.?\s*$/i;
+  const months = { января:1, февраля:2, марта:3, апреля:4, мая:5, июня:6, июля:7, августа:8, сентября:9, октября:10, ноября:11, декабря:12 };
+  let buffer = [];
+  function flush() {
+    if (buffer.length) {
+      const text = buffer.join('\n').trim();
+      if (text) {
+        let created_at = '';
+        if (currentDate && currentTime) created_at = currentDate + ' ' + currentTime + ':00';
+        else if (currentTime) {
+          const d = new Date();
+          created_at = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0') + ' ' + currentTime + ':00';
+        }
+        messages.push({ text, direction: 'unknown', source: '', created_at: created_at || null });
+      }
+      buffer = [];
+    }
+  }
+  for (const line of lines) {
+    const timeMatch = line.match(timeRe);
+    const dateMatch = line.match(dateRe);
+    if (dateMatch) {
+      flush();
+      const [, day, monthName, year] = dateMatch;
+      const month = months[monthName.toLowerCase()];
+      if (month) currentDate = year + '-' + String(month).padStart(2, '0') + '-' + String(parseInt(day, 10)).padStart(2, '0');
+    } else if (timeMatch) {
+      flush();
+      const [, h, m, s] = timeMatch;
+      currentTime = h.padStart(2, '0') + ':' + m.padStart(2, '0') + (s ? ':' + s.padStart(2, '0') : '');
+    } else {
+      buffer.push(line);
+    }
+  }
+  flush();
+  return messages;
+}
+
+async function importAvitoText(leadId) {
+  const textarea = document.getElementById('msgPaste-' + leadId);
+  const sourceEl = document.getElementById('msgSource-paste-' + leadId);
+  if (!textarea) return;
+  const text = textarea.value.trim();
+  if (!text) return;
+  const source = sourceEl ? sourceEl.value : 'Авито';
+  const messages = parseAvitoPaste(text);
+  if (!messages.length) return;
+  const withSource = messages.map(m => ({ ...m, source }));
+  const list = await apiCreateMessagesBulk(leadId, withSource);
+  if (!list) return;
+  textarea.value = '';
+  await loadMessagesIntoFeed(leadId);
+  const listEl = document.getElementById('messagesList-' + leadId);
+  if (listEl) listEl.scrollTop = listEl.scrollHeight;
+}
+
+let lastTelegramMessagesByLead = {};
+
+function parseTelegramHtml(htmlString) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(htmlString, 'text/html');
+  const me = (CONFIG.telegram_username || '').toString().trim().toLowerCase();
+  const rows = doc.querySelectorAll('div.message.default');
+  const messages = [];
+  const uniqueNames = new Set();
+  const nameCounts = {};
+  let lastSender = '';
+  for (const row of rows) {
+    const fromEl = row.querySelector('div.from_name');
+    let fromNameRaw;
+    if (fromEl) {
+      fromNameRaw = (fromEl.textContent || '');
+      lastSender = fromNameRaw;
+      if (fromNameRaw !== '') uniqueNames.add(fromNameRaw);
+    } else {
+      fromNameRaw = lastSender;
+    }
+    if (fromNameRaw !== '') nameCounts[fromNameRaw] = (nameCounts[fromNameRaw] || 0) + 1;
+    const fromName = fromNameRaw.trim();
+    const direction = me && fromName && fromName.toLowerCase() === me ? 'out' : 'in';
+    const dateEl = row.querySelector('div.pull_right.date');
+    const title = dateEl ? (dateEl.getAttribute('title') || '').trim() : '';
+    let created_at = '';
+    if (title) {
+      const m = title.match(/^(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}:\d{2}:\d{2})/);
+      if (m) created_at = m[3] + '-' + m[2] + '-' + m[1] + ' ' + m[4];
+    }
+    let text = '';
+    const textEl = row.querySelector('div.text');
+    if (textEl) {
+      const html = textEl.innerHTML || '';
+      const withNewlines = html.replace(/<br\s*\/?>/gi, '\n');
+      const div = doc.createElement('div');
+      div.innerHTML = withNewlines;
+      text = (div.textContent || '').trim();
+    }
+    if (!text) {
+      const mediaWrap = row.querySelector('div.media_wrap');
+      const oggLink = row.querySelector('a[href*=".ogg"]');
+      if (oggLink) text = '[Голосовое сообщение]';
+      else if (mediaWrap) text = '[Фото]';
+    }
+    messages.push({ text: text || '[Сообщение]', direction, source: 'Телеграм', created_at: created_at || null });
+  }
+  return { messages, uniqueNames: [...uniqueNames].sort(), nameCounts };
+}
+
+function handleTelegramDrop(e, leadId) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('drag');
+  const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (file && file.name.toLowerCase().endsWith('.html')) handleTelegramFile(leadId, file);
+}
+
+async function onTelegramFileSelected(leadId, fileInput) {
+  const file = fileInput && fileInput.files && fileInput.files[0];
+  if (!file || !file.name.toLowerCase().endsWith('.html')) {
+    const previewWrap = document.getElementById('msgTelegramPreview-' + leadId);
+    if (previewWrap) previewWrap.style.display = 'none';
+    lastTelegramMessagesByLead[leadId] = [];
+    return;
+  }
+  await handleTelegramFile(leadId, file);
+}
+
+async function handleTelegramFile(leadId, file) {
+  const previewWrap = document.getElementById('msgTelegramPreview-' + leadId);
+  const previewBody = document.getElementById('msgTelegramPreviewBody-' + leadId);
+  const html = await new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = rej;
+    r.readAsText(file, 'UTF-8');
+  });
+  let result;
+  try {
+    result = parseTelegramHtml(html);
+  } catch (e) {
+    console.error('Telegram HTML parse error', e);
+    if (previewWrap) previewWrap.style.display = 'none';
+    return;
+  }
+  const { messages, uniqueNames, nameCounts } = result;
+  lastTelegramMessagesByLead[leadId] = messages;
+  if (previewWrap && previewBody) {
+    const n = messages.length;
+    const configName = (CONFIG.telegram_username || '').toString();
+    const me = configName.trim().toLowerCase();
+    const matchFound = me && uniqueNames.some(function (raw) { return raw.trim().toLowerCase() === me; });
+    const lines = [
+      'Найдено сообщений: ' + n,
+      'Участники чата:',
+      ...uniqueNames.map(function (name) { return '- ' + name + ' (' + (nameCounts[name] || 0) + ' сообщений)'; }),
+      'Твоё имя в CONFIG.telegram_username: "' + configName + '"',
+      'Совпадение найдено: ' + (matchFound ? 'ДА' : 'НЕТ')
+    ];
+    previewBody.textContent = lines.join('\n');
+    previewWrap.style.display = 'block';
+  }
+}
+
+async function doImportTelegramFromPreview(leadId) {
+  const messages = lastTelegramMessagesByLead[leadId];
+  if (!messages || !messages.length) return;
+  const list = await apiCreateMessagesBulk(leadId, messages);
+  if (!list) return;
+  lastTelegramMessagesByLead[leadId] = [];
+  const previewWrap = document.getElementById('msgTelegramPreview-' + leadId);
+  if (previewWrap) previewWrap.style.display = 'none';
+  const fileInput = document.getElementById('msgTelegramFile-' + leadId);
+  if (fileInput) fileInput.value = '';
+  await loadMessagesIntoFeed(leadId);
+  const listEl = document.getElementById('messagesList-' + leadId);
+  if (listEl) listEl.scrollTop = listEl.scrollHeight;
 }
 
 // CALLS
@@ -392,28 +828,6 @@ function renderCalls(l) {
       }
     </div>
   `;
-}
-
-// SEND MSG
-function sendMsg(id) {
-  const l = leads.find(x=>x.id===id);
-  const ta = document.querySelector('.msg-input-area textarea');
-  const txt = ta?.value.trim();
-  if(!txt) return;
-  l.msgs.push({out:true,text:txt,time:'только что',src:null});
-  ta.value='';
-  switchTab('msgs');
-}
-
-// STATUS CYCLE
-const statusOrder = ['hot','client','repeat','sql','drain_g'];
-function cycleStatus(id) {
-  const l = leads.find(x=>x.id===id);
-  const idx = statusOrder.indexOf(l.status);
-  l.status = statusOrder[(idx+1)%statusOrder.length];
-  renderDetail();
-  renderList();
-  updateStats();
 }
 
 // UPLOAD

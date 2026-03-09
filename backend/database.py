@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-from backend.models import Lead
+from backend.models import Lead, NoteCreate, MessageCreate, MessageBulkItem
 
 # Путь к БД относительно корня проекта
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "crm.db"
@@ -31,6 +31,24 @@ def init_db() -> None:
                 status TEXT NOT NULL,
                 last_contact TEXT NOT NULL DEFAULT '',
                 comment TEXT NOT NULL DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS notes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                lead_id INTEGER NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+                text TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                lead_id INTEGER NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+                text TEXT NOT NULL,
+                direction TEXT NOT NULL,
+                source TEXT NOT NULL,
                 created_at TEXT DEFAULT (datetime('now'))
             )
         """)
@@ -108,5 +126,107 @@ def update_lead(lead_id: int, lead: Lead) -> bool:
 def delete_lead(lead_id: int) -> bool:
     with get_connection() as conn:
         cur = conn.execute("DELETE FROM leads WHERE id = ?", (lead_id,))
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def get_notes_by_lead_id(lead_id: int) -> list[dict]:
+    with get_connection() as conn:
+        cur = conn.execute(
+            "SELECT id, lead_id, text, created_at FROM notes WHERE lead_id = ? ORDER BY created_at DESC",
+            (lead_id,),
+        )
+        return [_row_to_dict(r) for r in cur.fetchall()]
+
+
+def create_note(lead_id: int, note: NoteCreate) -> int:
+    with get_connection() as conn:
+        cur = conn.execute(
+            "INSERT INTO notes (lead_id, text) VALUES (?, ?)",
+            (lead_id, note.text),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def get_note_by_id(note_id: int) -> dict | None:
+    with get_connection() as conn:
+        cur = conn.execute(
+            "SELECT id, lead_id, text, created_at FROM notes WHERE id = ?",
+            (note_id,),
+        )
+        row = cur.fetchone()
+        return _row_to_dict(row) if row else None
+
+
+def delete_note(note_id: int) -> bool:
+    with get_connection() as conn:
+        cur = conn.execute("DELETE FROM notes WHERE id = ?", (note_id,))
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def get_messages_by_lead_id(lead_id: int) -> list[dict]:
+    with get_connection() as conn:
+        cur = conn.execute(
+            "SELECT id, lead_id, text, direction, source, created_at FROM messages WHERE lead_id = ? ORDER BY created_at ASC",
+            (lead_id,),
+        )
+        return [_row_to_dict(r) for r in cur.fetchall()]
+
+
+def create_message(lead_id: int, msg: MessageCreate) -> int:
+    with get_connection() as conn:
+        cur = conn.execute(
+            "INSERT INTO messages (lead_id, text, direction, source) VALUES (?, ?, ?, ?)",
+            (lead_id, msg.text, msg.direction, msg.source),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def create_messages_bulk(lead_id: int, items: list[MessageBulkItem]) -> list[int]:
+    ids = []
+    with get_connection() as conn:
+        for item in items:
+            created_at = item.created_at if item.created_at else None
+            if created_at:
+                cur = conn.execute(
+                    "INSERT INTO messages (lead_id, text, direction, source, created_at) VALUES (?, ?, ?, ?, ?)",
+                    (lead_id, item.text, item.direction, item.source, created_at),
+                )
+            else:
+                cur = conn.execute(
+                    "INSERT INTO messages (lead_id, text, direction, source) VALUES (?, ?, ?, ?)",
+                    (lead_id, item.text, item.direction, item.source),
+                )
+            ids.append(cur.lastrowid)
+        conn.commit()
+    return ids
+
+
+def get_message_by_id(message_id: int) -> dict | None:
+    with get_connection() as conn:
+        cur = conn.execute(
+            "SELECT id, lead_id, text, direction, source, created_at FROM messages WHERE id = ?",
+            (message_id,),
+        )
+        row = cur.fetchone()
+        return _row_to_dict(row) if row else None
+
+
+def delete_message(message_id: int) -> bool:
+    with get_connection() as conn:
+        cur = conn.execute("DELETE FROM messages WHERE id = ?", (message_id,))
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def update_message_direction(message_id: int, direction: str) -> bool:
+    with get_connection() as conn:
+        cur = conn.execute(
+            "UPDATE messages SET direction = ? WHERE id = ?",
+            (direction, message_id),
+        )
         conn.commit()
         return cur.rowcount > 0

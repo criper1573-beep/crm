@@ -19,3 +19,40 @@ class Lead(BaseModel):
     last_contact: str = Field(default="", description="Дата последнего контакта")
     comment: str = Field(default="", description="Комментарий")
     created_at: str | None = Field(default=None, description="Дата создания, заполняется автоматически")
+
+
+class Note(BaseModel):
+    id: int | None = Field(default=None, description="Автоинкремент")
+    lead_id: int = Field(..., description="Внешний ключ на leads.id")
+    text: str = Field(..., description="Текст заметки")
+    created_at: str | None = Field(default=None, description="Дата и время создания, заполняется автоматически")
+
+
+class NoteCreate(BaseModel):
+    text: str = Field(..., description="Текст заметки")
+
+
+class Message(BaseModel):
+    id: int | None = Field(default=None, description="Автоинкремент")
+    lead_id: int = Field(..., description="Внешний ключ на leads.id")
+    text: str = Field(..., description="Текст сообщения")
+    direction: str = Field(..., description="in / out / unknown")
+    source: str = Field(..., description="Авито, Телеграм, WhatsApp, Телефон")
+    created_at: str | None = Field(default=None, description="Дата и время")
+
+
+class MessageCreate(BaseModel):
+    text: str = Field(..., description="Текст сообщения")
+    direction: str = Field(..., description="in / out / unknown")
+    source: str = Field(..., description="Источник")
+
+
+class MessageBulkItem(BaseModel):
+    text: str = Field(..., description="Текст сообщения")
+    direction: str = Field(..., description="in / out / unknown")
+    source: str = Field(..., description="Источник")
+    created_at: str | None = Field(default=None, description="Дата и время (опционально)")
+
+
+class MessageDirectionUpdate(BaseModel):
+    direction: str = Field(..., description="in / out")

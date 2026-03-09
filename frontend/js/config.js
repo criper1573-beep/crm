@@ -25,4 +25,8 @@ const CONFIG = {
   },
 
   objectTypes: ['Квартира', 'Коммерческая', 'Дом'],
+
+  messageSources: ['Авито', 'Телеграм', 'WhatsApp', 'Телефон'],
+
+  telegram_username: 'Алексей',
 }

@@ -15,6 +15,8 @@ const BUDGET = {
   hi:  { label:'> 100к',   cls:'btag-hi' },
 };
 
+const funnelOrder = ['all', 'repeat', 'client', 'hot', 'sql', 'mql', 'lead', 'drain_hot', 'drain_sql', 'drain_mql'];
+
 let leads = [];
 
 function mapLeadFromApi(l) {
@@ -35,6 +37,47 @@ async function reloadLeads() {
   renderList();
 }
 
+function showSaveIndicator(containerId) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  let ind = container.querySelector('.save-indicator');
+  if (!ind) {
+    ind = document.createElement('span');
+    ind.className = 'save-indicator';
+    ind.textContent = '✓';
+    container.appendChild(ind);
+  }
+  ind.classList.add('show');
+  clearTimeout(ind._hideTimer);
+  ind._hideTimer = setTimeout(() => { ind.classList.remove('show'); }, 1500);
+}
+
+function updateStatusInUI(leadId, newStatus) {
+  const si = getStatusInfo(newStatus);
+  const cfg = CONFIG.statuses && CONFIG.statuses[newStatus];
+  const label = (cfg && cfg.label) || si.label;
+  if (leadId === activeId) {
+    const badge = document.querySelector('.detail-header .d-sub .sbadge');
+    if (badge) {
+      badge.textContent = label;
+      badge.className = 'sbadge ' + (si.cls || '');
+    }
+    const btn = document.querySelector('.status-dropdown > button.dbtn');
+    if (btn) btn.textContent = label + ' ▼';
+  }
+  const row = document.getElementById('lc-' + leadId);
+  if (row) {
+    const badge = row.querySelector('.sbadge');
+    if (badge) {
+      badge.textContent = label;
+      badge.className = 'sbadge ' + (si.cls || '');
+    }
+    const classes = row.className.split(/\s+/).filter(c => c && !/^s-/.test(c));
+    row.className = classes.concat(si.side || 's-drain').join(' ');
+  }
+  updateStats();
+}
+
 function getLeadPayloadForUpdate(l, overrides = {}) {
   return {
     name: l.name,
@@ -48,6 +91,7 @@ function getLeadPayloadForUpdate(l, overrides = {}) {
     comment: l.comment || '',
     work_types: Array.isArray(l.work_types) ? l.work_types : (l.work_types ? JSON.parse(l.work_types || '[]') : []),
     description: l.description ?? '',
+    deal_amount: l.deal_amount != null ? (typeof l.deal_amount === 'number' ? l.deal_amount : parseInt(l.deal_amount, 10) || null) : null,
     ...overrides,
   };
 }
@@ -364,9 +408,7 @@ async function selectStatus(id, newStatus, e) {
   const updated = await apiUpdateLead(id, payload);
   if (!updated) return;
   l.status = newStatus;
-  renderDetail();
-  renderList();
-  updateStats();
+  updateStatusInUI(id, newStatus);
 }
 
 async function deleteLead(id) {
@@ -418,18 +460,58 @@ function updateStats() {
   document.getElementById('s3').textContent = groups.repeat + groups.sql;
   document.getElementById('s4').textContent = groups.drain;
 
-  // funnel
-  const fl = document.getElementById('funnelList');
-  fl.innerHTML = funnelConfig.map(f => {
-    const cnt = leads.filter(l => getStatusGroup(l.status) === f.key).length;
-    const pct = leads.length ? Math.round(cnt/leads.length*100) : 0;
-    return `<div class="funnel-item" onclick="setFilter('${f.key}',null)">
-      <div class="fi-dot" style="background:${f.color}"></div>
-      <div class="fi-label">${f.label}</div>
-      <div class="fi-count">${cnt}</div>
-      <div class="fi-pct" style="color:${f.color}">${pct}%</div>
+  const revenue = leads
+    .filter(l => l.status === 'client' || l.status === 'repeat')
+    .reduce((sum, l) => sum + (Number(l.deal_amount) || 0), 0);
+  const revenueEl = document.getElementById('revenueTotal');
+  if (revenueEl) revenueEl.textContent = formatDealAmount(revenue) || '0 ₽';
+
+  // funnel in sidebar: "Все" first, then statuses; click filters list; active row highlighted
+  const sfl = document.getElementById('sidebarFunnelList');
+  if (sfl) {
+    const total = leads.length;
+    const pctAll = total ? 100 : 0;
+    const activeAll = currentFilter === 'all';
+    let html = `<div class="funnel-item ${activeAll ? 'active' : ''}" onclick="setFilter('all')">
+      <div class="fi-dot" style="background:var(--accent)"></div>
+      <div class="fi-label">Все</div>
+      <div class="fi-count">${total}</div>
+      <div class="fi-pct" style="color:var(--accent)">${pctAll}%</div>
     </div>`;
-  }).join('');
+    if (CONFIG.statuses) {
+      funnelOrder.filter(k => k !== 'all').forEach(key => {
+        const cfg = CONFIG.statuses[key];
+        if (!cfg) return;
+        const cnt = leads.filter(l => l.status === key).length;
+        const pct = total ? Math.round(cnt / total * 100) : 0;
+        const color = (cfg && cfg.color) || 'var(--text2)';
+        const isActive = currentFilter === key;
+        html += `<div class="funnel-item ${isActive ? 'active' : ''}" onclick="setFilter('${escapeHtml(key)}')">
+          <div class="fi-dot" style="background:${color}"></div>
+          <div class="fi-label">${escapeHtml(cfg.label)}</div>
+          <div class="fi-count">${cnt}</div>
+          <div class="fi-pct" style="color:${color}">${pct}%</div>
+        </div>`;
+      });
+    }
+    sfl.innerHTML = html;
+  }
+  // work types stats in right panel
+  const wtEl = document.getElementById('workTypesStats');
+  if (wtEl && CONFIG.workTypes) {
+    const total = leads.length;
+    wtEl.innerHTML = CONFIG.workTypes.map(wt => {
+      const cnt = leads.filter(l => Array.isArray(l.work_types) && l.work_types.includes(wt)).length;
+      const pct = total ? Math.round(cnt / total * 100) : 0;
+      return `<div class="work-type-stat-row">
+        <div style="display:flex;justify-content:space-between;font-size:9px;margin-bottom:3px">
+          <span style="color:var(--text2)">${escapeHtml(wt)}</span>
+          <span style="color:var(--accent)">${cnt} · ${pct}%</span>
+        </div>
+        <div class="work-type-stat-bar"><div class="work-type-stat-fill" style="width:${pct}%"></div></div>
+      </div>`;
+    }).join('');
+  }
 
   // budget bars
   const budgets = {lo:0,mid:0,hi:0};
@@ -451,21 +533,44 @@ function updateStats() {
     </div>`;
   }).join('');
 
-  // alerts — hot with old date or no comment
-  const alerts = leads.filter(l => getStatusGroup(l.status)==='hot' && (!l.comment || l.comment===''));
-  const noReply = leads.filter(l => getStatusGroup(l.status)==='hot' && (l.msgs && l.msgs.length > 0 && !l.msgs[l.msgs.length-1].out));
-  document.getElementById('alertsList').innerHTML = [
-    ...noReply.slice(0,3).map(l => `
-      <div class="alert-item" onclick="openLead(${l.id})">
-        <div class="ai-top"><span>${l.name}</span><span style="font-size:8px;color:var(--muted)">${l.date}</span></div>
-        <div class="ai-sub">Клиент написал — нет ответа</div>
-      </div>`),
-    ...leads.filter(l=>l.status==='sql').slice(0,2).map(l => `
-      <div class="alert-item warn" onclick="openLead(${l.id})">
-        <div class="ai-top"><span>${l.name}</span><span style="font-size:8px;color:var(--muted)">${l.date}</span></div>
-        <div class="ai-sub">${l.comment || 'SQL — требует follow-up'}</div>
-      </div>`)
-  ].join('') || '<div style="font-size:10px;color:var(--muted);text-align:center;padding:10px">Всё обработано 👍</div>';
+  // Требуют внимания: условие 1 — последнее сообщение direction=in; условие 2 — не слив и (последнее исх. >24ч назад или нет сообщений и лид создан >24ч назад)
+  function isDrain(s) { return getStatusGroup(s) === 'drain'; }
+  function daysAgo(dateStr) {
+    if (!dateStr) return null;
+    const d = new Date(dateStr.replace(' ', 'T'));
+    if (isNaN(d.getTime())) return null;
+    return Math.floor((Date.now() - d.getTime()) / (24 * 60 * 60 * 1000));
+  }
+  const alertLeads = leads.filter(l => {
+    const lastDir = (l.last_message_direction || '').toLowerCase();
+    const lastDate = l.last_message_date || '';
+    const hasMessages = !!lastDir;
+    const cond1 = lastDir === 'in';
+    const notDrain = !isDrain(l.status);
+    const lastOutMoreThan24h = lastDir === 'out' && daysAgo(lastDate) !== null && daysAgo(lastDate) >= 1;
+    const noMessagesLeadOld = !hasMessages && daysAgo(l.created_at) !== null && daysAgo(l.created_at) >= 1;
+    const cond2 = notDrain && (lastOutMoreThan24h || noMessagesLeadOld);
+    return cond1 || cond2;
+  }).map(l => {
+    const lastDir = (l.last_message_direction || '').toLowerCase();
+    const reason = lastDir === 'in' ? 'Клиент написал — нет ответа' : (() => {
+      const refDate = lastDir === 'out' ? l.last_message_date : (l.created_at || '');
+      const days = daysAgo(refDate);
+      return days !== null ? 'Нет активности ' + days + ' дн.' : 'Нет активности';
+    })();
+    return { ...l, _reason: reason };
+  });
+  const alertsEl = document.getElementById('alertsList');
+  if (alertsEl) {
+    alertsEl.innerHTML = alertLeads.length ? alertLeads.map(l => {
+      const cfg = CONFIG.statuses && CONFIG.statuses[l.status];
+      const color = (cfg && cfg.color) || 'var(--text2)';
+      return `<div class="alert-item" onclick="openLead(${l.id})">
+        <div class="ai-top"><span>${escapeHtml(l.name)}</span><span style="font-size:9px;font-weight:500;color:${color}">${escapeHtml((cfg && cfg.label) || l.status)}</span></div>
+        <div class="ai-sub">${escapeHtml(l._reason)}</div>
+      </div>`;
+    }).join('') : '<div style="font-size:10px;color:var(--muted);text-align:center;padding:10px">Всё обработано 👍</div>';
+  }
 }
 
 // ─── RENDER LIST ───────────────────────────────────────────
@@ -498,25 +603,10 @@ function renderList() {
   }).join('');
 }
 
-function renderFilterRow() {
-  const el = document.getElementById('filterRow');
-  if (!el || !CONFIG.statuses) return;
-  const allBtn = `<button class="ftab active" data-f="all" onclick="setFilter('all',this)">Все</button>`;
-  const statusBtns = Object.entries(CONFIG.statuses).map(([key, cfg]) => {
-    const color = (cfg && cfg.color) || 'var(--text2)';
-    return `<button class="ftab" data-f="${escapeHtml(key)}" onclick="setFilter('${escapeHtml(key)}',this)" style="border-color:${color};color:${color}">${escapeHtml(cfg.label)}</button>`;
-  }).join('');
-  el.innerHTML = allBtn + statusBtns;
-}
-
-function setFilter(f, btn) {
+function setFilter(f) {
   currentFilter = f;
-  document.querySelectorAll('.ftab').forEach(b => b.classList.remove('active'));
-  if(btn) btn.classList.add('active');
-  else {
-    document.querySelectorAll('.ftab').forEach(b => { if(b.dataset.f===f) b.classList.add('active'); });
-  }
   renderList();
+  updateStats();
 }
 
 function filterLeads() { renderList(); }
@@ -540,7 +630,7 @@ function renderDetail() {
     <div class="detail-header fade-in">
       <div class="d-avatar">${l.name[0]}</div>
       <div>
-        <div class="d-name">${l.name}</div>
+        <div class="d-name-wrap" id="dNameWrap-${l.id}"><span class="d-name d-name-editable" data-lead-id="${l.id}" onclick="startEditLeadName(${l.id})" title="Нажмите для редактирования">${escapeHtml(l.name)}</span></div>
         <div class="d-sub">
           ${l.address ? `<span>📍 ${l.address}</span>` : ''}
           ${l.phone ? `<span>📞 ${l.phone}</span>` : ''}
@@ -552,7 +642,7 @@ function renderDetail() {
       </div>
       <div class="d-actions">
         ${l.phone ? `<button class="dbtn">📞 ${l.phone}</button>` : ''}
-        <a href="${l.link}" target="_blank" style="text-decoration:none"><button class="dbtn">🔗 Авито</button></a>
+        ${(l.avito_link || l.link) ? `<a href="${escapeHtml((l.avito_link || l.link).trim())}" target="_blank" rel="noopener" style="text-decoration:none"><button class="dbtn">🔗 Авито</button></a>` : `<button class="dbtn" disabled style="opacity:0.5;cursor:not-allowed;color:var(--muted)">🔗 Авито</button>`}
         <div class="status-dropdown" id="statusDropdown">
           <button type="button" class="dbtn" onclick="toggleStatusDropdown(event)">${si.label} ▼</button>
           <div class="status-dropdown-menu" id="statusDropdownMenu">
@@ -614,7 +704,10 @@ function initDescriptionBlur(leadId) {
     if (String(l.description || '') === value) return;
     const payload = getLeadPayloadForUpdate(l, { description: value });
     const updated = await apiUpdateLead(leadId, payload);
-    if (updated) l.description = value;
+    if (updated) {
+      l.description = value;
+      showSaveIndicator('cardField-' + leadId + '-description');
+    }
   });
 }
 
@@ -626,7 +719,93 @@ async function toggleWorkType(leadId, workTypeName, checked) {
   else arr = arr.filter(x => x !== workTypeName);
   const payload = getLeadPayloadForUpdate(l, { work_types: arr });
   const updated = await apiUpdateLead(leadId, payload);
-  if (updated) l.work_types = arr;
+  if (updated) {
+    l.work_types = arr;
+    showSaveIndicator('cardField-' + leadId + '-work_types');
+  }
+}
+
+function formatDealAmount(n) {
+  if (n == null || n === '' || isNaN(Number(n))) return '';
+  const num = parseInt(String(n).replace(/\D/g, ''), 10);
+  if (isNaN(num)) return '';
+  return String(num).replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + ' ₽';
+}
+
+function filterDealAmountInput(inputEl) {
+  inputEl.value = (inputEl.value || '').replace(/\D/g, '');
+}
+
+async function saveDealAmountOnBlur(inputEl) {
+  const leadId = parseInt(inputEl.getAttribute('data-lead-id'), 10);
+  const l = leads.find(x => x.id === leadId);
+  if (!l) return;
+  const digits = (inputEl.value || '').replace(/\D/g, '');
+  const value = digits ? parseInt(digits, 10) : null;
+  const payload = getLeadPayloadForUpdate(l, { deal_amount: value });
+  const updated = await apiUpdateLead(leadId, payload);
+  if (updated) {
+    l.deal_amount = value;
+    showSaveIndicator('cardField-' + leadId + '-deal_amount');
+    updateStats();
+  }
+}
+
+function startEditLeadName(leadId) {
+  const wrap = document.getElementById('dNameWrap-' + leadId);
+  const l = leads.find(x => x.id === leadId);
+  if (!wrap || !l) return;
+  const oldName = l.name || '';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'd-name-input';
+  input.value = oldName;
+  input.dataset.leadId = String(leadId);
+  wrap.innerHTML = '';
+  wrap.appendChild(input);
+  input.focus();
+  input.select();
+  function commit() {
+    const newName = (input.value || '').trim();
+    if (!newName) {
+      wrap.innerHTML = `<span class="d-name d-name-editable" data-lead-id="${leadId}" onclick="startEditLeadName(${leadId})" title="Нажмите для редактирования">${escapeHtml(oldName)}</span>`;
+      return;
+    }
+    input.removeEventListener('blur', onBlur);
+    input.removeEventListener('keydown', onKeyDown);
+    (async () => {
+      const payload = getLeadPayloadForUpdate(l, { name: newName });
+      const updated = await apiUpdateLead(leadId, payload);
+      if (updated) {
+        l.name = newName;
+        wrap.innerHTML = `<span class="d-name d-name-editable" data-lead-id="${leadId}" onclick="startEditLeadName(${leadId})" title="Нажмите для редактирования">${escapeHtml(newName)}</span>`;
+        const listRow = document.querySelector('#lc-' + leadId + ' .lc-name');
+        if (listRow) listRow.textContent = newName;
+        const avatar = document.querySelector('.detail-header .d-avatar');
+        if (avatar) avatar.textContent = (newName[0] || '').toUpperCase();
+        showSaveIndicator('dNameWrap-' + leadId);
+      } else {
+        wrap.innerHTML = `<span class="d-name d-name-editable" data-lead-id="${leadId}" onclick="startEditLeadName(${leadId})" title="Нажмите для редактирования">${escapeHtml(oldName)}</span>`;
+      }
+    })();
+  }
+  function onBlur() { commit(); }
+  function onKeyDown(e) { if (e.key === 'Enter') { e.preventDefault(); input.blur(); } }
+  input.addEventListener('blur', onBlur);
+  input.addEventListener('keydown', onKeyDown);
+}
+
+async function updateLeadField(leadId, field, value) {
+  const l = leads.find(x => x.id === leadId);
+  if (!l) return;
+  const payload = getLeadPayloadForUpdate(l, { [field]: value });
+  const updated = await apiUpdateLead(leadId, payload);
+  if (updated) {
+    l[field] = value;
+    if (field === 'object_type') l.obj = value;
+    if (field === 'status') updateStatusInUI(leadId, value);
+    else showSaveIndicator('cardField-' + leadId + '-' + field);
+  }
 }
 
 async function loadNotesIntoFeed(leadId) {
@@ -684,42 +863,44 @@ const workTypesList = () => (CONFIG.workTypes || []);
 
 function renderOverview(l) {
   const si = getStatusInfo(l.status);
-  const bi = BUDGET[l.budget];
   const lastMsg = (l.msgs && l.msgs.length) ? l.msgs[l.msgs.length-1] : null;
-  const tone = getStatusGroup(l.status)==='hot' ? 'Горячий, готов к сотрудничеству' :
-               getStatusGroup(l.status)==='client' ? 'Клиент, договорённость достигнута' :
-               getStatusGroup(l.status)==='drain' ? 'Слив — не конвертировался' :
-               getStatusGroup(l.status)==='repeat' ? 'Повторный клиент — лояльный' : 'SQL — ждёт финального решения';
   const wtArr = Array.isArray(l.work_types) ? l.work_types : [];
   const workTypesHtml = workTypesList().map(wt => {
     const checked = wtArr.includes(wt);
     const wtEsc = String(wt).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     return `<label class="work-type-cb"><input type="checkbox" ${checked ? 'checked' : ''} onchange="toggleWorkType(${l.id}, '${wtEsc}', this.checked)"> ${escapeHtml(wt)}</label>`;
   }).join('');
-
+  const statusOpts = CONFIG.statuses ? Object.entries(CONFIG.statuses).map(([k, v]) => `<option value="${escapeHtml(k)}" data-status="${escapeHtml(k)}" ${l.status === k ? 'selected' : ''}>${escapeHtml(v.label)}</option>`).join('') : '';
+  const budgetOpts = CONFIG.budgets ? Object.entries(CONFIG.budgets).map(([k, v]) => `<option value="${escapeHtml(k)}" ${l.budget === k ? 'selected' : ''}>${escapeHtml(v.label)}</option>`).join('') : '';
+  const objectOpts = CONFIG.objectTypes ? CONFIG.objectTypes.map(t => `<option value="${escapeHtml(t)}" ${(l.object_type || l.obj) === t ? 'selected' : ''}>${escapeHtml(t)}</option>`).join('') : '';
+  const showDealAmount = l.status === 'client' || l.status === 'repeat';
+  const dealAmountFormatted = formatDealAmount(l.deal_amount);
+  const dealAmountRowWithId = showDealAmount
+    ? `<div class="ai-field" id="cardField-${l.id}-deal_amount"><div class="aif-label">Сумма сделки</div><input type="text" class="aif-edit-input" id="dealAmountInput-${l.id}" value="${escapeHtml(dealAmountFormatted)}" placeholder="Введите сумму сметы" data-lead-id="${l.id}" oninput="filterDealAmountInput(this)" onblur="saveDealAmountOnBlur(this)"></div>`
+    : '';
   return `
-    <div class="ai-card">
-      <div class="ai-label"><span class="ai-spin">✦</span> AI-РЕЗЮМЕ ЛИДА · авто из переписки</div>
+    <div class="ai-card lead-card-block">
+      <div class="ai-label">КАРТОЧКА ЛИДА</div>
       <div class="ai-grid">
-        <div class="ai-field"><div class="aif-label">Статус</div><div class="aif-val ${getStatusGroup(l.status)==='hot'?'hot':getStatusGroup(l.status)==='client'?'ok':''}">${si.label}</div></div>
-        <div class="ai-field"><div class="aif-label">Тип объекта</div><div class="aif-val">${l.obj||'Не указан'}</div></div>
-        <div class="ai-field"><div class="aif-label">Бюджет</div><div class="aif-val accent">${bi?bi.label:'Не указан'}</div></div>
-        <div class="ai-field"><div class="aif-label">Адрес</div><div class="aif-val">${l.address||'Не указан'}</div></div>
+        <div class="ai-field" id="cardField-${l.id}-status"><div class="aif-label">Статус</div><select class="aif-edit-select" onchange="updateLeadField(${l.id}, 'status', this.value)">${statusOpts}</select></div>
+        <div class="ai-field" id="cardField-${l.id}-budget"><div class="aif-label">Бюджет</div><select class="aif-edit-select" onchange="updateLeadField(${l.id}, 'budget', this.value)">${budgetOpts}</select></div>
+        <div class="ai-field" id="cardField-${l.id}-object_type"><div class="aif-label">Тип объекта</div><select class="aif-edit-select" onchange="updateLeadField(${l.id}, 'object_type', this.value)">${objectOpts}</select></div>
+        <div class="ai-field" id="cardField-${l.id}-address"><div class="aif-label">Адрес</div><input type="text" class="aif-edit-input" value="${escapeHtml(l.address || '')}" placeholder="Адрес" onblur="updateLeadField(${l.id}, 'address', this.value)"></div>
         <div class="ai-field"><div class="aif-label">Последний контакт</div><div class="aif-val" id="lastContactDisplay-${l.id}">${l.date||'—'}</div></div>
-        <div class="ai-field"><div class="aif-label">Тон клиента</div><div class="aif-val">${tone}</div></div>
+        ${dealAmountRowWithId}
       </div>
       ${lastMsg ? `<div class="ai-comment" style="margin-top:8px">📩 <b>Последнее сообщение:</b> ${escapeHtml(lastMsg.text)}</div>` : ''}
-      <button class="dbtn" style="margin-top:10px;font-size:9px" onclick="alert('AI-функция будет добавлена позже')">↺ Обновить из переписки</button>
     </div>
 
-    <div class="overview-block">
+    <div class="overview-block overview-desc-block" id="cardField-${l.id}-description">
+      <div class="overview-block-title">ОПИСАНИЕ ПРОЕКТА</div>
+      <textarea class="overview-description-ta" id="descriptionTa-${l.id}" placeholder="Добавьте описание проекта или нажмите Обновить" data-lead-id="${l.id}">${escapeHtml(l.description || '')}</textarea>
+      <button type="button" class="dbtn" style="margin-top:8px;font-size:9px" onclick="alert('AI-функция будет добавлена в Этапе 2')">↺ Обновить из переписки и заметок</button>
+    </div>
+
+    <div class="overview-block" id="cardField-${l.id}-work_types">
       <div class="overview-block-title">Виды работ</div>
       <div class="work-types-row">${workTypesHtml}</div>
-    </div>
-
-    <div class="overview-block">
-      <div class="overview-block-title">Текстовое описание проекта</div>
-      <textarea class="overview-description-ta" id="descriptionTa-${l.id}" placeholder="Описание проекта..." data-lead-id="${l.id}">${escapeHtml(l.description || '')}</textarea>
     </div>
 
     <div class="notes-feed">
@@ -1132,13 +1313,30 @@ function simulateUpload(id,fname) {
   },3000);
 }
 
+function injectStatusOptionStyles() {
+  if (!CONFIG.statuses) return;
+  const id = 'status-option-hover-styles';
+  if (document.getElementById(id)) return;
+  const style = document.createElement('style');
+  style.id = id;
+  style.textContent = Object.entries(CONFIG.statuses).map(([k, cfg]) => {
+    const bg = (cfg && cfg.bg) || 'var(--border)';
+    return `.aif-edit-select option[data-status="${k}"]:hover { background: ${bg} !important; }`;
+  }).join('\n');
+  document.head.appendChild(style);
+}
+
 // INIT
 async function init() {
-  renderFilterRow();
+  injectStatusOptionStyles();
   const raw = await apiGetLeads();
   leads = (raw || []).map(mapLeadFromApi);
   updateStats();
   renderList();
   if (leads.length) setTimeout(() => openLead(leads[0].id), 200);
 }
-init();
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}

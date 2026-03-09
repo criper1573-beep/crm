@@ -34,6 +34,7 @@ def init_db() -> None:
                 comment TEXT NOT NULL DEFAULT '',
                 work_types TEXT NOT NULL DEFAULT '[]',
                 description TEXT NOT NULL DEFAULT '',
+                deal_amount INTEGER,
                 created_at TEXT DEFAULT (datetime('now'))
             )
         """)
@@ -44,6 +45,8 @@ def init_db() -> None:
             conn.execute("ALTER TABLE leads ADD COLUMN work_types TEXT NOT NULL DEFAULT '[]'")
         if "description" not in cols:
             conn.execute("ALTER TABLE leads ADD COLUMN description TEXT NOT NULL DEFAULT ''")
+        if "deal_amount" not in cols:
+            conn.execute("ALTER TABLE leads ADD COLUMN deal_amount INTEGER")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS notes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -79,21 +82,47 @@ def _lead_row_to_dict(row: sqlite3.Row) -> dict:
             d["work_types"] = []
     if "description" not in d:
         d["description"] = ""
+    if "deal_amount" in d and d["deal_amount"] is not None:
+        try:
+            d["deal_amount"] = int(d["deal_amount"])
+        except (TypeError, ValueError):
+            d["deal_amount"] = None
     return d
+
+
+def _get_last_message_per_lead() -> dict[int, dict]:
+    """Возвращает для каждого lead_id последнее сообщение: {direction, created_at}."""
+    with get_connection() as conn:
+        cur = conn.execute(
+            "SELECT lead_id, direction, created_at FROM messages ORDER BY lead_id, created_at DESC"
+        )
+        rows = cur.fetchall()
+    result = {}
+    for r in rows:
+        lead_id = r["lead_id"]
+        if lead_id not in result:
+            result[lead_id] = {"direction": r["direction"], "created_at": r["created_at"] or ""}
+    return result
 
 
 def get_all_leads() -> list[dict]:
     with get_connection() as conn:
         cur = conn.execute(
-            "SELECT id, name, phone, avito_link, address, object_type, budget, status, last_contact, comment, work_types, description, created_at FROM leads ORDER BY id"
+            "SELECT id, name, phone, avito_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, created_at FROM leads ORDER BY id"
         )
-        return [_lead_row_to_dict(r) for r in cur.fetchall()]
+        leads_list = [_lead_row_to_dict(r) for r in cur.fetchall()]
+    last_msgs = _get_last_message_per_lead()
+    for lead in leads_list:
+        lm = last_msgs.get(lead["id"], {})
+        lead["last_message_direction"] = lm.get("direction") or ""
+        lead["last_message_date"] = lm.get("created_at") or ""
+    return leads_list
 
 
 def get_lead_by_id(lead_id: int) -> dict | None:
     with get_connection() as conn:
         cur = conn.execute(
-            "SELECT id, name, phone, avito_link, address, object_type, budget, status, last_contact, comment, work_types, description, created_at FROM leads WHERE id = ?",
+            "SELECT id, name, phone, avito_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, created_at FROM leads WHERE id = ?",
             (lead_id,),
         )
         row = cur.fetchone()
@@ -104,9 +133,10 @@ def create_lead(lead: Lead) -> int:
     work_types_json = json.dumps(getattr(lead, "work_types", []) or [])
     description = getattr(lead, "description", "") or ""
     with get_connection() as conn:
+        deal_amount = getattr(lead, "deal_amount", None)
         cur = conn.execute(
-            """INSERT INTO leads (name, phone, avito_link, address, object_type, budget, status, last_contact, comment, work_types, description)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO leads (name, phone, avito_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 lead.name,
                 lead.phone,
@@ -119,6 +149,7 @@ def create_lead(lead: Lead) -> int:
                 lead.comment,
                 work_types_json,
                 description,
+                deal_amount,
             ),
         )
         conn.commit()
@@ -128,11 +159,12 @@ def create_lead(lead: Lead) -> int:
 def update_lead(lead_id: int, lead: Lead) -> bool:
     work_types_json = json.dumps(getattr(lead, "work_types", []) or [])
     description = getattr(lead, "description", "") or ""
+    deal_amount = getattr(lead, "deal_amount", None)
     with get_connection() as conn:
         cur = conn.execute(
             """UPDATE leads SET
                 name = ?, phone = ?, avito_link = ?, address = ?, object_type = ?, budget = ?, status = ?,
-                last_contact = ?, comment = ?, work_types = ?, description = ?
+                last_contact = ?, comment = ?, work_types = ?, description = ?, deal_amount = ?
                WHERE id = ?""",
             (
                 lead.name,
@@ -146,6 +178,7 @@ def update_lead(lead_id: int, lead: Lead) -> bool:
                 lead.comment,
                 work_types_json,
                 description,
+                deal_amount,
                 lead_id,
             ),
         )

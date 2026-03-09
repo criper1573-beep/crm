@@ -20,6 +20,7 @@ class Lead(BaseModel):
     comment: str = Field(default="", description="Комментарий")
     work_types: list[str] = Field(default_factory=list, description="Виды работ — JSON-массив строк")
     description: str = Field(default="", description="Текстовое описание проекта")
+    deal_amount: int | None = Field(default=None, description="Сумма сделки в рублях, может быть пустым")
     created_at: str | None = Field(default=None, description="Дата создания, заполняется автоматически")
 
 

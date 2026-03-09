@@ -61,7 +61,10 @@
         <span style="font-size:12px;opacity:.4">🔍</span>
         <input type="text" id="searchInput" placeholder="Имя, адрес, комментарий..." oninput="filterLeads()">
       </div>
-      <div class="filter-row" id="filterRow"></div>
+      <div class="sidebar-funnel">
+        <div class="rp-sec">Воронка статусов</div>
+        <div class="funnel-list" id="sidebarFunnelList"></div>
+      </div>
     </div>
     <div class="leads-list" id="leadsList"></div>
   </div>
@@ -77,8 +80,8 @@
     <div class="rp-scroll">
 
       <div>
-        <div class="rp-sec">📊 Воронка статусов</div>
-        <div id="funnelList"></div>
+        <div class="rp-sec">ВИДЫ РАБОТ</div>
+        <div id="workTypesStats"></div>
       </div>
 
       <div class="div"></div>
@@ -90,6 +93,10 @@
           <div class="stat-box"><div class="stat-val" style="color:var(--client)" id="s2">0</div><div class="stat-lbl">Клиентов</div></div>
           <div class="stat-box"><div class="stat-val" style="color:var(--accent)" id="s3">0</div><div class="stat-lbl">Повторно</div></div>
           <div class="stat-box"><div class="stat-val" style="color:var(--text2)" id="s4">0</div><div class="stat-lbl">Слив</div></div>
+        </div>
+        <div class="stat-revenue-block">
+          <div class="stat-revenue-label">Выручка</div>
+          <div id="revenueTotal" class="stat-revenue-val">0 ₽</div>
         </div>
       </div>
 

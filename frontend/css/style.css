@@ -220,6 +220,8 @@ header::before {
 .d-name-editable:hover{background:var(--surface2);outline:1px solid var(--border);}
 .d-name-wrap .d-name-input{font-family:'Unbounded',sans-serif;font-size:14px;font-weight:600;margin-bottom:4px;width:100%;max-width:280px;padding:2px 6px;border:1px solid var(--accent);border-radius:3px;background:var(--surface2);color:var(--text);outline:none;}
 .d-sub{font-size:9px;color:var(--text2);display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
+.d-sub .ymaps-link{margin-left:2px;text-decoration:none;opacity:0.85;}
+.d-sub .ymaps-link:hover{opacity:1;}
 .d-actions{margin-left:auto;display:flex;gap:6px;}
 .dbtn{
   font-size:9px;padding:6px 12px;border-radius:4px;
@@ -516,6 +518,11 @@ header::before {
 .rp-scroll::-webkit-scrollbar-thumb{background:var(--muted);border-radius:2px;}
 
 .rp-sec{font-size:8px;letter-spacing:.1em;color:var(--muted);text-transform:uppercase;margin-bottom:8px;}
+
+.period-switcher{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:4px;}
+.period-btn{font-size:9px;padding:6px 10px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);color:var(--text2);cursor:pointer;transition:border-color .15s, color .15s, background .15s;}
+.period-btn:hover{border-color:var(--accent);color:var(--text);}
+.period-btn.active{border-color:var(--accent);background:rgba(124,92,252,0.12);color:var(--accent);}
 
 /* STATUS FUNNEL */
 .funnel-item{

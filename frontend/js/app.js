@@ -428,6 +428,42 @@ async function deleteLead(id) {
 let activeId = null;
 let activeTab = 'overview';
 let currentFilter = 'all';
+let currentPeriod = 'month';
+
+function getPeriodRange(periodKey) {
+  const today = new Date();
+  const y = today.getFullYear();
+  const m = today.getMonth();
+  const d = today.getDate();
+  const toStr = (date) => date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0');
+  let startDate;
+  let endDate = toStr(today);
+  if (periodKey === 'month') {
+    startDate = y + '-' + String(m + 1).padStart(2, '0') + '-01';
+  } else {
+    const daysBack = periodKey === 'week' ? 7 : periodKey === 'prev_month' ? 30 : periodKey === 'quarter' ? 90 : periodKey === 'year' ? 365 : 30;
+    const start = new Date(today);
+    start.setDate(start.getDate() - daysBack);
+    startDate = toStr(start);
+  }
+  return { startDate, endDate };
+}
+
+function getLeadsForPeriod() {
+  const { startDate, endDate } = getPeriodRange(currentPeriod);
+  return leads.filter(l => {
+    const created = (l.created_at || '').slice(0, 10);
+    return created >= startDate && created <= endDate;
+  });
+}
+
+function setPeriod(periodKey) {
+  currentPeriod = periodKey;
+  document.querySelectorAll('.period-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.getAttribute('data-period') === periodKey);
+  });
+  updateStats();
+}
 
 // ─── STATUS CONFIG ──────────────────────────────────────────
 const funnelConfig = [
@@ -450,17 +486,20 @@ function getStatusInfo(s) {
 
 // ─── STATS ─────────────────────────────────────────────────
 function updateStats() {
+  const leadsForPeriod = getLeadsForPeriod();
   const groups = {hot:0,client:0,repeat:0,drain:0,sql:0};
   leads.forEach(l => { const g = getStatusGroup(l.status); if(groups[g]!==undefined) groups[g]++; });
   document.getElementById('cntHot').textContent = groups.hot;
   document.getElementById('cntClient').textContent = groups.client;
   document.getElementById('cntAll').textContent = leads.length;
-  document.getElementById('s1').textContent = groups.hot;
-  document.getElementById('s2').textContent = groups.client;
-  document.getElementById('s3').textContent = groups.repeat + groups.sql;
-  document.getElementById('s4').textContent = groups.drain;
+  const periodGroups = {hot:0,client:0,repeat:0,drain:0,sql:0};
+  leadsForPeriod.forEach(l => { const g = getStatusGroup(l.status); if(periodGroups[g]!==undefined) periodGroups[g]++; });
+  document.getElementById('s1').textContent = periodGroups.hot;
+  document.getElementById('s2').textContent = periodGroups.client;
+  document.getElementById('s3').textContent = periodGroups.repeat + periodGroups.sql;
+  document.getElementById('s4').textContent = periodGroups.drain;
 
-  const revenue = leads
+  const revenue = leadsForPeriod
     .filter(l => l.status === 'client' || l.status === 'repeat')
     .reduce((sum, l) => sum + (Number(l.deal_amount) || 0), 0);
   const revenueEl = document.getElementById('revenueTotal');
@@ -496,12 +535,12 @@ function updateStats() {
     }
     sfl.innerHTML = html;
   }
-  // work types stats in right panel
+  // work types stats in right panel (by period)
   const wtEl = document.getElementById('workTypesStats');
   if (wtEl && CONFIG.workTypes) {
-    const total = leads.length;
+    const total = leadsForPeriod.length;
     wtEl.innerHTML = CONFIG.workTypes.map(wt => {
-      const cnt = leads.filter(l => Array.isArray(l.work_types) && l.work_types.includes(wt)).length;
+      const cnt = leadsForPeriod.filter(l => Array.isArray(l.work_types) && l.work_types.includes(wt)).length;
       const pct = total ? Math.round(cnt / total * 100) : 0;
       return `<div class="work-type-stat-row">
         <div style="display:flex;justify-content:space-between;font-size:9px;margin-bottom:3px">
@@ -513,15 +552,15 @@ function updateStats() {
     }).join('');
   }
 
-  // budget bars
+  // budget bars (by period)
   const budgets = {lo:0,mid:0,hi:0};
-  leads.forEach(l => { if(budgets[l.budget]!==undefined) budgets[l.budget]++; });
+  leadsForPeriod.forEach(l => { if(budgets[l.budget]!==undefined) budgets[l.budget]++; });
   document.getElementById('budgetBars').innerHTML = [
     {k:'hi',label:'> 100к',color:'var(--accent2)'},
     {k:'mid',label:'30–100к',color:'var(--accent)'},
     {k:'lo',label:'< 30к',color:'var(--muted)'},
   ].map(b => {
-    const pct = leads.length ? Math.round(budgets[b.k]/leads.length*100) : 0;
+    const pct = leadsForPeriod.length ? Math.round(budgets[b.k]/leadsForPeriod.length*100) : 0;
     return `<div style="margin-bottom:8px">
       <div style="display:flex;justify-content:space-between;font-size:9px;margin-bottom:3px">
         <span style="color:var(--text2)">${b.label}</span>
@@ -632,12 +671,13 @@ function renderDetail() {
       <div>
         <div class="d-name-wrap" id="dNameWrap-${l.id}"><span class="d-name d-name-editable" data-lead-id="${l.id}" onclick="startEditLeadName(${l.id})" title="Нажмите для редактирования">${escapeHtml(l.name)}</span></div>
         <div class="d-sub">
-          ${l.address ? `<span>📍 ${l.address}</span>` : ''}
+          ${l.address ? `<span>📍 ${escapeHtml(l.address)}</span><a href="https://yandex.ru/maps/?text=${encodeURIComponent(l.address)}" target="_blank" rel="noopener" class="ymaps-link" title="Открыть в Яндекс Картах">🗺️</a>` : ''}
           ${l.phone ? `<span>📞 ${l.phone}</span>` : ''}
           <span class="sbadge ${si.cls}">${si.label}</span>
           ${bi ? `<span class="btag ${bi.cls}">${bi.label}</span>` : ''}
           ${l.obj ? `<span class="otag">${l.obj}</span>` : ''}
-          <span style="color:var(--muted);font-size:9px">${l.date}</span>
+          <span style="color:var(--muted);font-size:9px" title="Последний контакт">${l.date}</span>
+          <span style="color:var(--muted);font-size:9px" title="Дата появления лида">📅 Появился: ${formatCreatedDate(l.created_at)}</span>
         </div>
       </div>
       <div class="d-actions">
@@ -832,6 +872,18 @@ function formatNoteDate(createdAt) {
   const m = s.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})/);
   if (m) return `${m[3]}.${m[2]}.${m[1]} ${m[4]}:${m[5]}`;
   return s;
+}
+
+function formatCreatedDate(createdAt) {
+  if (!createdAt) return '—';
+  const s = String(createdAt).trim();
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[3]}.${m[2]}.${m[1]}`;
+  const d = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})/);
+  if (d) return `${d[1].padStart(2,'0')}.${d[2].padStart(2,'0')}.${d[3]}`;
+  const d2 = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{2})/);
+  if (d2) return `${d2[1].padStart(2,'0')}.${d2[2].padStart(2,'0')}.20${d2[3]}`;
+  return s.slice(0, 10) || '—';
 }
 
 async function addNote(leadId) {
@@ -1329,6 +1381,10 @@ function injectStatusOptionStyles() {
 // INIT
 async function init() {
   injectStatusOptionStyles();
+  document.addEventListener('click', function periodSwitcherClick(e) {
+    const btn = e.target.closest('#periodSwitcher .period-btn');
+    if (btn) setPeriod(btn.getAttribute('data-period'));
+  });
   const raw = await apiGetLeads();
   leads = (raw || []).map(mapLeadFromApi);
   updateStats();

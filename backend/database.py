@@ -293,3 +293,61 @@ def update_message_direction(message_id: int, direction: str) -> bool:
         )
         conn.commit()
         return cur.rowcount > 0
+
+
+def _parse_date_to_ymd(s: str):
+    """Парсит строку даты в (year, month, day) или None. Поддерживает разные форматы."""
+    import re
+    if not s or not isinstance(s, str):
+        return None
+    s = s.strip()
+    # YYYY-MM-DD или YYYY-MM-DD HH:MM:SS или YYYY-MM-DDTHH:MM:SS
+    m = re.match(r"^(\d{4})-(\d{1,2})-(\d{1,2})", s)
+    if m:
+        return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    # DD.MM.YYYY или D.M.YYYY (с пробелом/временем после)
+    m = re.match(r"^(\d{1,2})\.(\d{1,2})\.(\d{4})", s)
+    if m:
+        return (int(m.group(3)), int(m.group(2)), int(m.group(1)))
+    # DD.MM.YY (двузначный год: 00-99 → 2000-2099)
+    m = re.match(r"^(\d{1,2})\.(\d{1,2})\.(\d{2})\b", s)
+    if m:
+        yy = int(m.group(3))
+        year = 2000 + yy if yy < 100 else yy
+        return (year, int(m.group(2)), int(m.group(1)))
+    # DD/MM/YYYY
+    m = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{4})", s)
+    if m:
+        return (int(m.group(3)), int(m.group(2)), int(m.group(1)))
+    return None
+
+
+def sync_created_at_from_last_contact() -> int:
+    """
+    Проставляет created_at: из last_contact, при пустом — из даты последнего сообщения.
+    Возвращает количество обновлённых записей.
+    """
+    with get_connection() as conn:
+        cur = conn.execute("SELECT id, last_contact FROM leads")
+        leads_rows = cur.fetchall()
+        cur = conn.execute(
+            "SELECT lead_id, MAX(created_at) AS last_msg FROM messages GROUP BY lead_id"
+        )
+        last_msg_by_lead = {r["lead_id"]: r["last_msg"] for r in cur.fetchall()}
+
+        updated = 0
+        for row in leads_rows:
+            lead_id = row["id"]
+            last_contact = (row["last_contact"] or "").strip()
+            ymd = _parse_date_to_ymd(last_contact)
+            if not ymd and lead_id in last_msg_by_lead:
+                last_msg = last_msg_by_lead[lead_id] or ""
+                ymd = _parse_date_to_ymd(last_msg)
+            if not ymd:
+                continue
+            y, mo, d = ymd
+            created_at = f"{y:04d}-{mo:02d}-{d:02d} 00:00:00"
+            conn.execute("UPDATE leads SET created_at = ? WHERE id = ?", (created_at, lead_id))
+            updated += 1
+        conn.commit()
+    return updated

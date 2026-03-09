@@ -1,5 +1,6 @@
 # SQLite logic
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -31,9 +32,18 @@ def init_db() -> None:
                 status TEXT NOT NULL,
                 last_contact TEXT NOT NULL DEFAULT '',
                 comment TEXT NOT NULL DEFAULT '',
+                work_types TEXT NOT NULL DEFAULT '[]',
+                description TEXT NOT NULL DEFAULT '',
                 created_at TEXT DEFAULT (datetime('now'))
             )
         """)
+        # Миграция: добавить колонки в существующую таблицу, если их нет
+        cur = conn.execute("PRAGMA table_info(leads)")
+        cols = [r[1] for r in cur.fetchall()]
+        if "work_types" not in cols:
+            conn.execute("ALTER TABLE leads ADD COLUMN work_types TEXT NOT NULL DEFAULT '[]'")
+        if "description" not in cols:
+            conn.execute("ALTER TABLE leads ADD COLUMN description TEXT NOT NULL DEFAULT ''")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS notes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -60,29 +70,43 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
     return dict(row)
 
 
+def _lead_row_to_dict(row: sqlite3.Row) -> dict:
+    d = dict(row)
+    if "work_types" in d and isinstance(d.get("work_types"), str):
+        try:
+            d["work_types"] = json.loads(d["work_types"]) if d["work_types"] else []
+        except (json.JSONDecodeError, TypeError):
+            d["work_types"] = []
+    if "description" not in d:
+        d["description"] = ""
+    return d
+
+
 def get_all_leads() -> list[dict]:
     with get_connection() as conn:
         cur = conn.execute(
-            "SELECT id, name, phone, avito_link, address, object_type, budget, status, last_contact, comment, created_at FROM leads ORDER BY id"
+            "SELECT id, name, phone, avito_link, address, object_type, budget, status, last_contact, comment, work_types, description, created_at FROM leads ORDER BY id"
         )
-        return [_row_to_dict(r) for r in cur.fetchall()]
+        return [_lead_row_to_dict(r) for r in cur.fetchall()]
 
 
 def get_lead_by_id(lead_id: int) -> dict | None:
     with get_connection() as conn:
         cur = conn.execute(
-            "SELECT id, name, phone, avito_link, address, object_type, budget, status, last_contact, comment, created_at FROM leads WHERE id = ?",
+            "SELECT id, name, phone, avito_link, address, object_type, budget, status, last_contact, comment, work_types, description, created_at FROM leads WHERE id = ?",
             (lead_id,),
         )
         row = cur.fetchone()
-        return _row_to_dict(row) if row else None
+        return _lead_row_to_dict(row) if row else None
 
 
 def create_lead(lead: Lead) -> int:
+    work_types_json = json.dumps(getattr(lead, "work_types", []) or [])
+    description = getattr(lead, "description", "") or ""
     with get_connection() as conn:
         cur = conn.execute(
-            """INSERT INTO leads (name, phone, avito_link, address, object_type, budget, status, last_contact, comment)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO leads (name, phone, avito_link, address, object_type, budget, status, last_contact, comment, work_types, description)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 lead.name,
                 lead.phone,
@@ -93,6 +117,8 @@ def create_lead(lead: Lead) -> int:
                 lead.status,
                 lead.last_contact,
                 lead.comment,
+                work_types_json,
+                description,
             ),
         )
         conn.commit()
@@ -100,11 +126,13 @@ def create_lead(lead: Lead) -> int:
 
 
 def update_lead(lead_id: int, lead: Lead) -> bool:
+    work_types_json = json.dumps(getattr(lead, "work_types", []) or [])
+    description = getattr(lead, "description", "") or ""
     with get_connection() as conn:
         cur = conn.execute(
             """UPDATE leads SET
                 name = ?, phone = ?, avito_link = ?, address = ?, object_type = ?, budget = ?, status = ?,
-                last_contact = ?, comment = ?
+                last_contact = ?, comment = ?, work_types = ?, description = ?
                WHERE id = ?""",
             (
                 lead.name,
@@ -116,6 +144,8 @@ def update_lead(lead_id: int, lead: Lead) -> bool:
                 lead.status,
                 lead.last_contact,
                 lead.comment,
+                work_types_json,
+                description,
                 lead_id,
             ),
         )

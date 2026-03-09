@@ -46,6 +46,8 @@ function getLeadPayloadForUpdate(l, overrides = {}) {
     status: l.status,
     last_contact: l.last_contact ?? l.date ?? '',
     comment: l.comment || '',
+    work_types: Array.isArray(l.work_types) ? l.work_types : (l.work_types ? JSON.parse(l.work_types || '[]') : []),
+    description: l.description ?? '',
     ...overrides,
   };
 }
@@ -127,16 +129,223 @@ function cancelNewLeadForm() {
   document.getElementById('newLeadFormWrap').style.display = 'none';
 }
 
+// ─── CSV Import ───────────────────────────────────────────
+let csvImportRows = [];
+
+function toggleCsvImportModal() {
+  const overlay = document.getElementById('csvImportOverlay');
+  if (!overlay) return;
+  if (overlay.style.display === 'none') {
+    overlay.style.display = 'flex';
+    csvImportRows = [];
+    document.getElementById('csvImportPreview').style.display = 'none';
+    document.getElementById('csvImportDrop').style.display = 'block';
+    document.getElementById('csvImportDrop').onclick = () => document.getElementById('csvImportFileInput').click();
+  } else {
+    overlay.style.display = 'none';
+    csvImportRows = [];
+  }
+}
+
+function handleCsvDragOver(e) {
+  e.preventDefault();
+  e.currentTarget.classList.add('dragover');
+}
+
+function handleCsvDragLeave(e) {
+  e.currentTarget.classList.remove('dragover');
+}
+
+function handleCsvDrop(e) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('dragover');
+  const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (file && file.name.toLowerCase().endsWith('.csv')) processCsvFile(file);
+}
+
+function onCsvFileSelected(e) {
+  const file = e.target && e.target.files[0];
+  if (file) processCsvFile(file);
+  e.target.value = '';
+}
+
+function parseCsvLine(line, sep) {
+  const out = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') { inQuotes = !inQuotes; continue; }
+    if (!inQuotes && c === sep) { out.push(cur.trim()); cur = ''; continue; }
+    cur += c;
+  }
+  out.push(cur.trim());
+  return out;
+}
+
+function mapBudget(val) {
+  if (!val) return 'lo';
+  const v = String(val).toLowerCase().replace(/\s/g, '');
+  if (v === '<30к' || v === 'до30к') return 'lo';
+  if (v === '30к-100к' || v === '30-100к') return 'mid';
+  if (v === '>100к') return 'hi';
+  return 'lo';
+}
+
+function mapStatus(val) {
+  if (!val) return 'lead';
+  const v = String(val).trim();
+  const map = {
+    'Горячий лид': 'hot', 'Клиент': 'client', 'Повторный клиент': 'repeat',
+    'MQL': 'mql', 'SQL': 'sql', 'Лид': 'lead',
+    'Слив MQL': 'drain_mql', 'Слив SQL': 'drain_sql', 'Слив горя': 'drain_hot', 'Слив горячий лид': 'drain_hot'
+  };
+  return map[v] || 'lead';
+}
+
+function isWorkTypeTrue(val) {
+  return String(val === undefined ? '' : val).trim().toUpperCase() === 'TRUE';
+}
+
+async function processCsvFile(file) {
+  const text = await file.text();
+  const lines = text.split(/\r?\n/);
+  if (lines.length < 4) { csvImportRows = []; showCsvPreview(); return; }
+  const sep = (lines[0] || '').includes(';') ? ';' : ',';
+  const headersRow0 = parseCsvLine(lines[0], sep).map(h => (h || '').replace(/^"|"$/g, '').trim());
+  const row1Cells = parseCsvLine(lines[1], sep).map(c => (c || '').replace(/^"|"$/g, '').trim());
+  const workTypeNames = row1Cells.slice(9, 16);
+  const rows = [];
+  for (let i = 3; i < lines.length; i++) {
+    const line = (lines[i] || '').trim();
+    if (!line) continue;
+    const cells = parseCsvLine(lines[i], sep).map(c => (c !== undefined && c !== null ? c : '').toString().replace(/^"|"$/g, ''));
+    const row = {};
+    for (let j = 0; j < 9 && j < headersRow0.length; j++) {
+      row[headersRow0[j] || 'col' + j] = cells[j] !== undefined ? cells[j] : '';
+    }
+    const name = (row['Имя'] || row['имя'] || '').trim();
+    if (!name) continue;
+    const workTypes = [];
+    for (let k = 0; k < workTypeNames.length; k++) {
+      if (workTypeNames[k] && isWorkTypeTrue(cells[9 + k])) workTypes.push(workTypeNames[k]);
+    }
+    rows.push({
+      name,
+      avito_link: (row['Ссылка'] || row['ссылка'] || '').trim(),
+      phone: (row['Телефон'] || row['телефон'] || '').trim(),
+      address: (row['Адрес'] || row['адрес'] || '').trim(),
+      object_type: (row['Тип объекта'] || row['тип объекта'] || '').trim() || 'Квартира',
+      budget: mapBudget(row['Бюджет'] || row['бюджет']),
+      status: mapStatus(row['Статус'] || row['статус']),
+      last_contact: (row['Последний контакт'] || row['последний контакт'] || '').trim(),
+      comment: (row['Комментарий'] || row['комментарий'] || '').trim(),
+      work_types: workTypes,
+      description: '',
+    });
+  }
+  const allLeads = await apiGetLeads();
+  const mapped = (allLeads || []).map(mapLeadFromApi);
+  for (const row of rows) {
+    let existing = null;
+    if (row.avito_link) existing = mapped.find(l => (l.avito_link || l.link || '').trim() === row.avito_link);
+    if (!existing) existing = mapped.find(l => (l.name || '').trim() === row.name);
+    if (existing) {
+      row._action = 'update';
+      row._existingId = existing.id;
+      row._existingLead = existing;
+    } else {
+      row._action = 'new';
+    }
+  }
+  csvImportRows = rows;
+  showCsvPreview();
+}
+
+function showCsvPreview() {
+  const preview = document.getElementById('csvImportPreview');
+  const countEl = document.getElementById('csvImportPreviewCount');
+  const drop = document.getElementById('csvImportDrop');
+  if (!preview || !countEl) return;
+  if (csvImportRows.length === 0) {
+    preview.style.display = 'none';
+    drop.style.display = 'block';
+    return;
+  }
+  drop.style.display = 'none';
+  preview.style.display = 'block';
+  const newCount = csvImportRows.filter(r => r._action === 'new').length;
+  const updateCount = csvImportRows.filter(r => r._action === 'update').length;
+  countEl.innerHTML = `Новых лидов: <strong>${newCount}</strong><br>Будет обновлено: <strong>${updateCount}</strong>`;
+}
+
+async function doCsvImport() {
+  for (const row of csvImportRows) {
+    if (row._action === 'update') {
+      const existing = row._existingLead;
+      const payload = {
+        name: existing.name,
+        phone: row.phone,
+        avito_link: existing.avito_link ?? existing.link ?? '',
+        address: row.address,
+        object_type: existing.object_type ?? existing.obj ?? '',
+        budget: row.budget,
+        status: row.status,
+        last_contact: row.last_contact,
+        comment: existing.comment ?? '',
+        work_types: row.work_types,
+        description: existing.description ?? '',
+      };
+      await apiUpdateLead(row._existingId, payload);
+      if (row.comment) {
+        const notes = await apiGetNotes(row._existingId);
+        if (notes && notes.length === 0) await apiCreateNote(row._existingId, row.comment);
+      }
+    } else {
+      const leadData = {
+        name: row.name,
+        avito_link: row.avito_link,
+        phone: row.phone,
+        address: row.address,
+        object_type: row.object_type,
+        budget: row.budget,
+        status: row.status,
+        last_contact: row.last_contact,
+        comment: '',
+        work_types: row.work_types,
+        description: '',
+      };
+      const created = await apiCreateLead(leadData);
+      if (created && created.id && row.comment) await apiCreateNote(created.id, row.comment);
+    }
+  }
+  csvImportRows = [];
+  toggleCsvImportModal();
+  await reloadLeads();
+}
+
+function cancelCsvImport() {
+  csvImportRows = [];
+  toggleCsvImportModal();
+}
+
 function toggleStatusDropdown(e) {
   e.stopPropagation();
   const wrap = document.getElementById('statusDropdown');
   const menu = document.getElementById('statusDropdownMenu');
   const isOpen = menu && menu.style.display === 'block';
   document.querySelectorAll('.status-dropdown-menu').forEach(m => { m.style.display = 'none'; });
-  if (!isOpen && menu) {
+  if (!isOpen && menu && wrap) {
+    const btn = wrap.querySelector('button');
+    const rect = btn ? btn.getBoundingClientRect() : e.currentTarget.getBoundingClientRect();
+    if (menu.parentNode !== document.body) document.body.appendChild(menu);
+    menu.style.position = 'fixed';
+    menu.style.left = rect.left + 'px';
+    menu.style.top = (rect.bottom + 4) + 'px';
     menu.style.display = 'block';
     setTimeout(() => {
       const close = () => {
+        if (wrap && menu.parentNode === document.body) wrap.appendChild(menu);
         menu.style.display = 'none';
         document.removeEventListener('click', close);
       };
@@ -188,7 +397,8 @@ const funnelConfig = [
 ];
 
 function getStatusGroup(s) {
-  if(['drain_g','drain_m','drain_s'].includes(s)) return 'drain';
+  if (!s) return s;
+  if (['drain_g', 'drain_m', 'drain_s', 'drain_mql', 'drain_sql', 'drain_hot'].includes(s) || String(s).startsWith('drain')) return 'drain';
   return s;
 }
 
@@ -262,8 +472,9 @@ function updateStats() {
 function renderList() {
   const q = document.getElementById('searchInput').value.toLowerCase();
   const filtered = leads.filter(l => {
-    const matchFilter = currentFilter === 'all' || getStatusGroup(l.status) === currentFilter;
-    const matchSearch = !q || l.name.toLowerCase().includes(q) || l.address.toLowerCase().includes(q) || l.comment.toLowerCase().includes(q);
+    const matchFilter = currentFilter === 'all' ||
+      (CONFIG.statuses && currentFilter in CONFIG.statuses ? l.status === currentFilter : getStatusGroup(l.status) === currentFilter);
+    const matchSearch = !q || (l.name || '').toLowerCase().includes(q) || (l.address || '').toLowerCase().includes(q) || (l.comment || '').toLowerCase().includes(q);
     return matchFilter && matchSearch;
   });
 
@@ -283,9 +494,19 @@ function renderList() {
         ${bi ? `<span class="btag ${bi.cls}">${bi.label}</span>` : ''}
         ${l.obj ? `<span class="otag">${l.obj}</span>` : ''}
       </div>
-      ${l.comment ? `<div class="lc-comment">${l.comment}</div>` : ''}
     </div>`;
   }).join('');
+}
+
+function renderFilterRow() {
+  const el = document.getElementById('filterRow');
+  if (!el || !CONFIG.statuses) return;
+  const allBtn = `<button class="ftab active" data-f="all" onclick="setFilter('all',this)">Все</button>`;
+  const statusBtns = Object.entries(CONFIG.statuses).map(([key, cfg]) => {
+    const color = (cfg && cfg.color) || 'var(--text2)';
+    return `<button class="ftab" data-f="${escapeHtml(key)}" onclick="setFilter('${escapeHtml(key)}',this)" style="border-color:${color};color:${color}">${escapeHtml(cfg.label)}</button>`;
+  }).join('');
+  el.innerHTML = allBtn + statusBtns;
 }
 
 function setFilter(f, btn) {
@@ -335,7 +556,7 @@ function renderDetail() {
         <div class="status-dropdown" id="statusDropdown">
           <button type="button" class="dbtn" onclick="toggleStatusDropdown(event)">${si.label} ▼</button>
           <div class="status-dropdown-menu" id="statusDropdownMenu">
-            ${Object.entries(CONFIG.statuses).map(([k, v]) => `<button type="button" class="status-dropdown-item" data-status="${k}" onclick="selectStatus(${l.id}, '${k}', event)">${v.label}</button>`).join('')}
+            ${Object.entries(CONFIG.statuses).map(([k, v]) => `<button type="button" class="status-dropdown-item" data-status="${k}" style="color:${v.color};--status-bg:${v.bg}" onclick="selectStatus(${l.id}, '${k}', event)"><span class="status-dropdown-dot" style="background:${v.color}"></span>${v.label}</button>`).join('')}
           </div>
         </div>
         <button class="dbtn primary" onclick="switchTab('msgs')">💬 Ответить</button>
@@ -369,7 +590,48 @@ function switchTab(tab) {
   if (tab === 'msgs') setTimeout(() => loadMessagesIntoFeed(activeId), 0);
 }
 
+async function loadLastContactFromMessages(leadId) {
+  const el = document.getElementById('lastContactDisplay-' + leadId);
+  if (!el) return;
+  const messages = await apiGetMessages(leadId);
+  if (messages && messages.length > 0) {
+    const maxDate = messages.reduce((max, m) => {
+      const d = m.created_at || '';
+      return d > max ? d : max;
+    }, '');
+    if (maxDate) el.textContent = formatNoteDate(maxDate);
+  }
+}
+
+function initDescriptionBlur(leadId) {
+  const ta = document.getElementById('descriptionTa-' + leadId);
+  if (!ta || ta.dataset.blurInited) return;
+  ta.dataset.blurInited = '1';
+  ta.addEventListener('blur', async function onBlur() {
+    const l = leads.find(x => x.id === leadId);
+    if (!l) return;
+    const value = ta.value.trim();
+    if (String(l.description || '') === value) return;
+    const payload = getLeadPayloadForUpdate(l, { description: value });
+    const updated = await apiUpdateLead(leadId, payload);
+    if (updated) l.description = value;
+  });
+}
+
+async function toggleWorkType(leadId, workTypeName, checked) {
+  const l = leads.find(x => x.id === leadId);
+  if (!l) return;
+  let arr = Array.isArray(l.work_types) ? [...l.work_types] : [];
+  if (checked) { if (!arr.includes(workTypeName)) arr.push(workTypeName); }
+  else arr = arr.filter(x => x !== workTypeName);
+  const payload = getLeadPayloadForUpdate(l, { work_types: arr });
+  const updated = await apiUpdateLead(leadId, payload);
+  if (updated) l.work_types = arr;
+}
+
 async function loadNotesIntoFeed(leadId) {
+  loadLastContactFromMessages(leadId);
+  initDescriptionBlur(leadId);
   const el = document.getElementById('notesList-' + leadId);
   if (!el) return;
   const notes = await apiGetNotes(leadId);
@@ -418,6 +680,8 @@ function renderTab(l) {
 }
 
 // OVERVIEW
+const workTypesList = () => (CONFIG.workTypes || []);
+
 function renderOverview(l) {
   const si = getStatusInfo(l.status);
   const bi = BUDGET[l.budget];
@@ -426,6 +690,12 @@ function renderOverview(l) {
                getStatusGroup(l.status)==='client' ? 'Клиент, договорённость достигнута' :
                getStatusGroup(l.status)==='drain' ? 'Слив — не конвертировался' :
                getStatusGroup(l.status)==='repeat' ? 'Повторный клиент — лояльный' : 'SQL — ждёт финального решения';
+  const wtArr = Array.isArray(l.work_types) ? l.work_types : [];
+  const workTypesHtml = workTypesList().map(wt => {
+    const checked = wtArr.includes(wt);
+    const wtEsc = String(wt).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    return `<label class="work-type-cb"><input type="checkbox" ${checked ? 'checked' : ''} onchange="toggleWorkType(${l.id}, '${wtEsc}', this.checked)"> ${escapeHtml(wt)}</label>`;
+  }).join('');
 
   return `
     <div class="ai-card">
@@ -435,11 +705,21 @@ function renderOverview(l) {
         <div class="ai-field"><div class="aif-label">Тип объекта</div><div class="aif-val">${l.obj||'Не указан'}</div></div>
         <div class="ai-field"><div class="aif-label">Бюджет</div><div class="aif-val accent">${bi?bi.label:'Не указан'}</div></div>
         <div class="ai-field"><div class="aif-label">Адрес</div><div class="aif-val">${l.address||'Не указан'}</div></div>
-        <div class="ai-field"><div class="aif-label">Последний контакт</div><div class="aif-val">${l.date||'—'}</div></div>
+        <div class="ai-field"><div class="aif-label">Последний контакт</div><div class="aif-val" id="lastContactDisplay-${l.id}">${l.date||'—'}</div></div>
         <div class="ai-field"><div class="aif-label">Тон клиента</div><div class="aif-val">${tone}</div></div>
       </div>
       ${lastMsg ? `<div class="ai-comment" style="margin-top:8px">📩 <b>Последнее сообщение:</b> ${escapeHtml(lastMsg.text)}</div>` : ''}
-      <button class="dbtn" style="margin-top:10px;font-size:9px" onclick="">↺ Обновить из переписки</button>
+      <button class="dbtn" style="margin-top:10px;font-size:9px" onclick="alert('AI-функция будет добавлена позже')">↺ Обновить из переписки</button>
+    </div>
+
+    <div class="overview-block">
+      <div class="overview-block-title">Виды работ</div>
+      <div class="work-types-row">${workTypesHtml}</div>
+    </div>
+
+    <div class="overview-block">
+      <div class="overview-block-title">Текстовое описание проекта</div>
+      <textarea class="overview-description-ta" id="descriptionTa-${l.id}" placeholder="Описание проекта..." data-lead-id="${l.id}">${escapeHtml(l.description || '')}</textarea>
     </div>
 
     <div class="notes-feed">
@@ -854,6 +1134,7 @@ function simulateUpload(id,fname) {
 
 // INIT
 async function init() {
+  renderFilterRow();
   const raw = await apiGetLeads();
   leads = (raw || []).map(mapLeadFromApi);
   updateStats();

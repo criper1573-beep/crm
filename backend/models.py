@@ -18,6 +18,8 @@ class Lead(BaseModel):
     status: LeadStatus = Field(..., description="Статус лида")
     last_contact: str = Field(default="", description="Дата последнего контакта")
     comment: str = Field(default="", description="Комментарий")
+    work_types: list[str] = Field(default_factory=list, description="Виды работ — JSON-массив строк")
+    description: str = Field(default="", description="Текстовое описание проекта")
     created_at: str | None = Field(default=None, description="Дата создания, заполняется автоматически")
 
 

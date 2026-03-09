@@ -16,6 +16,7 @@
 <header>
   <div class="logo">МОНТАЖ<span>·</span>CRM</div>
   <button type="button" class="header-btn-new" id="btnNewLead" onclick="toggleNewLeadForm()">＋ Новый лид</button>
+  <button type="button" class="header-btn-new header-btn-import" id="btnImportCsv" onclick="toggleCsvImportModal()">Импорт CSV</button>
   <div class="hstat"><div class="dot dot-live"></div>Авито синхронизирован</div>
   <div class="header-stats">
     <div class="hstat"><div class="dot dot-hot"></div>Горячих: <b id="cntHot">0</b></div>
@@ -60,13 +61,7 @@
         <span style="font-size:12px;opacity:.4">🔍</span>
         <input type="text" id="searchInput" placeholder="Имя, адрес, комментарий..." oninput="filterLeads()">
       </div>
-      <div class="filter-row" id="filterRow">
-        <button class="ftab active" data-f="all" onclick="setFilter('all',this)">Все</button>
-        <button class="ftab" data-f="hot" onclick="setFilter('hot',this)">🔥 Горячие</button>
-        <button class="ftab" data-f="client" onclick="setFilter('client',this)">✅ Клиенты</button>
-        <button class="ftab" data-f="repeat" onclick="setFilter('repeat',this)">🔄 Повторно</button>
-        <button class="ftab" data-f="drain" onclick="setFilter('drain',this)">📉 Сливы</button>
-      </div>
+      <div class="filter-row" id="filterRow"></div>
     </div>
     <div class="leads-list" id="leadsList"></div>
   </div>
@@ -116,5 +111,23 @@
   </div>
 </div>
 
+<!-- CSV Import Modal -->
+<div class="csv-import-overlay" id="csvImportOverlay" style="display:none">
+  <div class="csv-import-modal">
+    <div class="csv-import-title">Импорт CSV</div>
+    <div class="csv-import-drop" id="csvImportDrop" ondragover="handleCsvDragOver(event)" ondragleave="handleCsvDragLeave(event)" ondrop="handleCsvDrop(event)">
+      <input type="file" id="csvImportFileInput" accept=".csv" style="display:none" onchange="onCsvFileSelected(event)">
+      <div class="csv-import-drop-text" id="csvImportDropText">Перетащите .csv файл сюда или нажмите для выбора</div>
+    </div>
+    <div class="csv-import-preview" id="csvImportPreview" style="display:none">
+      <div class="csv-import-preview-count" id="csvImportPreviewCount"></div>
+      <div class="csv-import-preview-actions">
+        <button type="button" class="dbtn primary" onclick="doCsvImport()">Импортировать</button>
+        <button type="button" class="dbtn" onclick="cancelCsvImport()">Отмена</button>
+      </div>
+    </div>
+    <button type="button" class="csv-import-close" onclick="toggleCsvImportModal()" aria-label="Закрыть">×</button>
+  </div>
+</div>
 </body>
 </html>

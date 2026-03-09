@@ -26,6 +26,6 @@
 - [ ] Деплой на VPS
 
 ## Соглашения
-- Статусы лида: hot, client, repeat, drain, sql
+- Статусы лида: lead, mql, sql, hot, client, repeat, drain_mql, drain_sql, drain_hot
 - Бюджеты: lo (<30к), mid (30-100к), hi (>100к)
 - Типы объектов: Квартира, Коммерческая, Дом

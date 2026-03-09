@@ -168,3 +168,20 @@ async function apiUpdateMessageDirection(id, direction) {
     return null;
   }
 }
+
+async function apiSummarizeLead(leadId) {
+  try {
+    const res = await fetch(`${BASE}/leads/${leadId}/summarize`, { method: 'POST' });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const detail = body.detail;
+      const msg = typeof detail === 'string' ? detail : Array.isArray(detail) && detail[0] ? (detail[0].msg || String(detail[0])) : (detail && detail.msg) || res.statusText;
+      throw new Error(msg);
+    }
+    return { ...body, _status: res.status };
+  } catch (e) {
+    console.error('apiSummarizeLead:', e);
+    throw e;
+  }
+}
+if (typeof window !== 'undefined') window.apiSummarizeLead = apiSummarizeLead;

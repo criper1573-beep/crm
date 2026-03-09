@@ -751,6 +751,60 @@ function initDescriptionBlur(leadId) {
   });
 }
 
+async function requestLeadSummary(leadId) {
+  const l = leads.find(x => x.id === leadId);
+  if (!l) return;
+  const fn = window.apiSummarizeLead;
+  if (typeof fn !== 'function') {
+    alert('Модуль API не загружен. Обновите страницу (F5).');
+    return;
+  }
+  const btn = document.getElementById('btnSummarize-' + leadId);
+  const origText = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Запуск…'; }
+  try {
+    const res = await fn(leadId);
+    const isStarted = res && (res._status === 202 || res.status === 'started');
+    if (isStarted) {
+      if (btn) btn.textContent = 'В фоне…';
+      alert('Резюме генерируется в фоне (до 3 мин). Результат сохранится в описание лида. Можно закрыть вкладку — при следующем открытии карточки описание обновится.');
+      startSummaryPolling(leadId);
+    } else if (res && res.description != null) {
+      l.description = res.description;
+      const ta = document.getElementById('descriptionTa-' + leadId);
+      if (ta) ta.value = res.description;
+      showSaveIndicator('cardField-' + leadId + '-description');
+    }
+  } catch (e) {
+    alert(e.message || 'Ошибка при запуске генерации резюме');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = origText; }
+  }
+}
+
+function startSummaryPolling(leadId) {
+  const l = leads.find(x => x.id === leadId);
+  if (!l) return;
+  const maxAttempts = 24;
+  const intervalMs = 15000;
+  let attempts = 0;
+  const timer = setInterval(async () => {
+    attempts++;
+    if (attempts > maxAttempts) {
+      clearInterval(timer);
+      return;
+    }
+    const updated = await apiGetLead(leadId);
+    if (updated && updated.description && String(updated.description).trim() !== String(l.description || '').trim()) {
+      l.description = updated.description;
+      const ta = document.getElementById('descriptionTa-' + leadId);
+      if (ta) ta.value = updated.description;
+      showSaveIndicator('cardField-' + leadId + '-description');
+      clearInterval(timer);
+    }
+  }, intervalMs);
+}
+
 async function toggleWorkType(leadId, workTypeName, checked) {
   const l = leads.find(x => x.id === leadId);
   if (!l) return;
@@ -947,7 +1001,7 @@ function renderOverview(l) {
     <div class="overview-block overview-desc-block" id="cardField-${l.id}-description">
       <div class="overview-block-title">ОПИСАНИЕ ПРОЕКТА</div>
       <textarea class="overview-description-ta" id="descriptionTa-${l.id}" placeholder="Добавьте описание проекта или нажмите Обновить" data-lead-id="${l.id}">${escapeHtml(l.description || '')}</textarea>
-      <button type="button" class="dbtn" style="margin-top:8px;font-size:9px" onclick="alert('AI-функция будет добавлена в Этапе 2')">↺ Обновить из переписки и заметок</button>
+      <button type="button" class="dbtn" id="btnSummarize-${l.id}" style="margin-top:8px;font-size:9px" onclick="requestLeadSummary(${l.id})">↺ Обновить из переписки и заметок</button>
     </div>
 
     <div class="overview-block" id="cardField-${l.id}-work_types">

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>МОНТАЖ·CRM</title>
+<title>FLOW CRM</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@300;400;600;700&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/style.css?v=scrollbar6">
@@ -15,11 +15,9 @@
 
 <!-- HEADER -->
 <header>
-  <div class="logo">МОНТАЖ<span>·</span>CRM</div>
+  <div class="logo">FLOW<span>·</span>CRM</div>
   <button type="button" class="header-btn-mobile header-btn-mobile-left" id="btnMobileSidebar" onclick="toggleMobilePanel('sidebar')" aria-label="Лиды">≡ Лиды</button>
   <button type="button" class="header-btn-mobile header-btn-mobile-right" id="btnMobileRpanel" onclick="toggleMobilePanel('rpanel')" aria-label="Аналитика">▣ Аналитика</button>
-  <button type="button" class="header-btn-new" id="btnNewLead" onclick="toggleNewLeadForm()">＋ Новый лид</button>
-  <button type="button" class="header-btn-new header-btn-import" id="btnImportCsv" onclick="toggleCsvImportModal()">Импорт CSV</button>
   <div class="hstat header-hstat-avito"><div class="dot dot-live"></div>Авито синхронизирован</div>
   <div class="header-stats">
     <div class="hstat"><div class="dot dot-hot"></div>Горячих: <b id="cntHot">0</b></div>
@@ -32,6 +30,10 @@
 
   <!-- SIDEBAR -->
   <div class="sidebar">
+    <div class="sidebar-actions">
+      <button type="button" class="sidebar-btn sidebar-btn-new" id="btnNewLead" onclick="toggleNewLeadForm()">＋ Новый лид</button>
+      <button type="button" class="sidebar-btn sidebar-btn-import" id="btnImportCsv" onclick="toggleCsvImportModal()">Импорт CSV</button>
+    </div>
     <div class="new-lead-form-wrap" id="newLeadFormWrap" style="display:none">
       <div class="new-lead-form">
         <div class="nlf-title">Новый лид</div>

@@ -1,4 +1,4 @@
-# Монтаж CRM — Контекст проекта
+# FLOW CRM — Контекст проекта
 
 ## Стек
 - Backend: Python, FastAPI, SQLite

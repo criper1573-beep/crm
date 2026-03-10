@@ -1,5 +1,5 @@
 [Unit]
-Description=Montazh CRM
+Description=FLOW CRM
 After=network.target
 
 [Service]

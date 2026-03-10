@@ -718,7 +718,7 @@ function renderDetail() {
         <div class="d-name-wrap" id="dNameWrap-${l.id}"><span class="d-name d-name-editable" data-lead-id="${l.id}" onclick="startEditLeadName(${l.id})" title="Нажмите для редактирования">${escapeHtml(l.name)}</span></div>
         <div class="d-sub">
           ${l.address ? `<span>📍 ${escapeHtml(l.address)}</span><a href="https://yandex.ru/maps/?text=${encodeURIComponent(l.address)}" target="_blank" rel="noopener" class="ymaps-link" title="Открыть в Яндекс Картах">🗺️</a>` : ''}
-          ${l.phone ? `<span>📞 ${l.phone}</span>` : ''}
+          ${l.phone ? `<a href="tel:${(l.phone).replace(/[^\d+]/g, '')}" class="d-sub-phone" title="Позвонить">📞 ${escapeHtml(l.phone)}</a>` : ''}
           <span class="sbadge ${si.cls}">${si.label}</span>
           ${bi ? `<span class="btag ${bi.cls}">${bi.label}</span>` : ''}
           ${l.obj ? `<span class="otag">${l.obj}</span>` : ''}
@@ -727,7 +727,7 @@ function renderDetail() {
         </div>
       </div>
       <div class="d-actions">
-        ${l.phone ? `<button class="dbtn">📞 ${l.phone}</button>` : ''}
+        ${l.phone ? `<a href="tel:${(l.phone).replace(/[^\d+]/g, '')}" class="dbtn dbtn-tel" title="Позвонить">📞 ${escapeHtml(l.phone)}</a>` : ''}
         ${(l.avito_link || l.link) ? `<a href="${escapeHtml((l.avito_link || l.link).trim())}" target="_blank" rel="noopener" style="text-decoration:none"><button class="dbtn">🔗 Авито</button></a>` : `<button class="dbtn" disabled style="opacity:0.5;cursor:not-allowed;color:var(--muted)">🔗 Авито</button>`}
         <div class="status-dropdown" id="statusDropdown">
           <button type="button" class="dbtn" onclick="toggleStatusDropdown(event)">${si.label} ▼</button>

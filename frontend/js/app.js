@@ -541,9 +541,13 @@ function updateStats() {
   document.getElementById('s3').textContent = periodGroups.repeat + periodGroups.sql;
   document.getElementById('s4').textContent = periodGroups.drain;
 
-  const revenue = leadsForPeriod
-    .filter(l => l.status === 'client' || l.status === 'repeat')
-    .reduce((sum, l) => sum + (Number(l.effective_deal_amount ?? l.deal_amount) || 0), 0);
+  const revenueLeads = leadsForPeriod.filter(l => l.status === 'client' || l.status === 'repeat');
+  const revenue = revenueLeads.reduce((sum, l) => {
+    const v = (l.has_multiple_objects && l.objects && l.objects.length)
+      ? (l.objects || []).reduce((s, o) => s + (Number(o.deal_amount) || 0), 0)
+      : (Number(l.deal_amount) || 0);
+    return sum + v;
+  }, 0);
   const revenueEl = document.getElementById('revenueTotal');
   if (revenueEl) revenueEl.textContent = formatDealAmount(revenue) || '0 ₽';
 

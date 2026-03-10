@@ -58,6 +58,8 @@ def _normalize_summary_text(text: str) -> str:
     # Убрать лишние пробелы
     t = re.sub(r' {2,}', ' ', t)
     t = re.sub(r'\n\n +', '\n\n', t)
+    # Убрать пробелы перед знаками препинания (артефакты GRS AI: " ," " .")
+    t = re.sub(r' +([.,!?;:])', r'\1', t)
     return t.strip()
 
 
@@ -269,6 +271,54 @@ def summarize_lead(lead_id: int, background_tasks: BackgroundTasks):
         status_code=202,
         content={"status": "started", "message": "Резюме генерируется в фоне. Результат сохранится в описание лида."},
     )
+
+
+@app.post("/api/leads/{lead_id}/generate-reply")
+def generate_reply(lead_id: int):
+    """Генерация ответа клиенту по последним 10 сообщениям и контексту. Синхронно."""
+    # #region agent log
+    import json as _j
+    _dbg_path = PROJECT_ROOT / "debug-8d7168.log"
+    try:
+        with open(_dbg_path, "a", encoding="utf-8") as _f:
+            _f.write(_j.dumps({"sessionId": "8d7168", "location": "main.py:generate_reply", "message": "handler hit", "data": {"lead_id": lead_id}, "hypothesisId": "H3", "timestamp": __import__("time").time() * 1000}) + "\n")
+    except Exception:
+        pass
+    # #endregion
+    lead = database.get_lead_by_id(lead_id)
+    if lead is None:
+        raise HTTPException(status_code=404, detail="Лид не найден")
+    messages = database.get_messages_by_lead_id(lead_id)
+    last_10 = messages[-10:] if len(messages) > 10 else messages
+
+    context_path = PROJECT_ROOT / "data" / "context.txt"
+    context_text = ""
+    if context_path.exists():
+        context_text = context_path.read_text(encoding="utf-8", errors="replace").strip()
+    description = (lead.get("description") or "").strip()
+
+    system_content = (
+        "Ты помощник менеджера по ремонту коммерческих помещений.\n"
+        f"Контекст бизнеса: {context_text}\n"
+        f"Описание проекта: {description}\n"
+        "Задача: напиши короткий деловой ответ клиенту на русском языке.\n"
+        "Только текст ответа, без кавычек и пояснений."
+    )
+    user_lines = [f"[{m.get('direction', '')}]: {m.get('text', '')}" for m in last_10]
+    user_content = "\n".join(user_lines) if user_lines else "Нет сообщений."
+
+    messages_api = [
+        {"role": "system", "content": system_content},
+        {"role": "user", "content": user_content},
+    ]
+    try:
+        reply = grs_ai.chat_completion(messages_api, max_tokens=300)
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    reply = _normalize_summary_text(reply.strip() or "")
+    return {"reply": reply}
 
 
 # Статика фронтенда по корневому пути (подключать после /api)

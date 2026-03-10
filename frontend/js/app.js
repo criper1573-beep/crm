@@ -1064,6 +1064,7 @@ function renderMsgs(l) {
           <select id="msgSource-write-${leadId}" class="msg-form-select">${sourcesOpts}</select>
           <button type="button" class="dbtn" onclick="sendMessageAs(${leadId}, 'in')">← Входящее</button>
           <button type="button" class="dbtn primary" onclick="sendMessageAs(${leadId}, 'out')">Исходящее →</button>
+          <button type="button" id="msgAiBtn-${leadId}" class="dbtn" onclick="requestAiReply(${leadId})">✦ AI ответ</button>
         </div>
       </div>
       <div class="msg-form-panel" data-msg-panel="paste">
@@ -1184,6 +1185,22 @@ async function sendMessageAs(leadId, direction) {
   await loadMessagesIntoFeed(leadId);
   const listEl = document.getElementById('messagesList-' + leadId);
   if (listEl) listEl.scrollTop = listEl.scrollHeight;
+}
+
+async function requestAiReply(leadId) {
+  const btn = document.getElementById('msgAiBtn-' + leadId);
+  const api = typeof window !== 'undefined' && window.apiGenerateReply;
+  if (!api) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Генерирую...'; }
+  try {
+    const data = await api(leadId);
+    const ta = document.getElementById('msgText-' + leadId);
+    if (ta && data && data.reply != null) ta.value = data.reply;
+  } catch (e) {
+    alert(e && (e.message || String(e)) || 'Ошибка генерации ответа');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '✦ AI ответ'; }
+  }
 }
 
 function parseAvitoPaste(text) {

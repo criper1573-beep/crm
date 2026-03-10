@@ -65,9 +65,11 @@ async function apiDeleteLead(id) {
   }
 }
 
-async function apiGetNotes(leadId) {
+async function apiGetNotes(leadId, leadObjectId = null) {
   try {
-    const res = await fetch(`${BASE}/leads/${leadId}/notes`);
+    let url = `${BASE}/leads/${leadId}/notes`;
+    if (leadObjectId != null) url += '?lead_object_id=' + encodeURIComponent(leadObjectId);
+    const res = await fetch(url);
     if (!res.ok) throw new Error(res.statusText);
     return await res.json();
   } catch (e) {
@@ -76,17 +78,71 @@ async function apiGetNotes(leadId) {
   }
 }
 
-async function apiCreateNote(leadId, text) {
+async function apiCreateNote(leadId, text, leadObjectId = null) {
   try {
+    const body = { text };
+    if (leadObjectId != null) body.lead_object_id = leadObjectId;
     const res = await fetch(`${BASE}/leads/${leadId}/notes`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error(res.statusText);
     return await res.json();
   } catch (e) {
     console.error('apiCreateNote:', e);
+    return null;
+  }
+}
+
+async function apiGetObjects(leadId) {
+  try {
+    const res = await fetch(`${BASE}/leads/${leadId}/objects`);
+    if (!res.ok) throw new Error(res.statusText);
+    return await res.json();
+  } catch (e) {
+    console.error('apiGetObjects:', e);
+    return null;
+  }
+}
+
+async function apiCreateObject(leadId, data) {
+  try {
+    const res = await fetch(`${BASE}/leads/${leadId}/objects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error(res.statusText);
+    return await res.json();
+  } catch (e) {
+    console.error('apiCreateObject:', e);
+    return null;
+  }
+}
+
+async function apiUpdateObject(leadId, objectId, data) {
+  try {
+    const res = await fetch(`${BASE}/leads/${leadId}/objects/${objectId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error(res.statusText);
+    return await res.json();
+  } catch (e) {
+    console.error('apiUpdateObject:', e);
+    return null;
+  }
+}
+
+async function apiDeleteObject(leadId, objectId) {
+  try {
+    const res = await fetch(`${BASE}/leads/${leadId}/objects/${objectId}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(res.statusText);
+    return await res.json();
+  } catch (e) {
+    console.error('apiDeleteObject:', e);
     return null;
   }
 }

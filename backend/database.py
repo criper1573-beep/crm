@@ -4,7 +4,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-from backend.models import Lead, NoteCreate, MessageCreate, MessageBulkItem
+from backend.models import Lead, LeadObject, LeadObjectCreate, NoteCreate, MessageCreate, MessageBulkItem
 
 # Путь к БД относительно корня проекта
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "crm.db"
@@ -55,6 +55,22 @@ def init_db() -> None:
             conn.execute("ALTER TABLE leads ADD COLUMN max_link TEXT NOT NULL DEFAULT ''")
         if "tg_link" not in cols:
             conn.execute("ALTER TABLE leads ADD COLUMN tg_link TEXT NOT NULL DEFAULT ''")
+        if "has_multiple_objects" not in cols:
+            conn.execute("ALTER TABLE leads ADD COLUMN has_multiple_objects INTEGER NOT NULL DEFAULT 0")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS lead_objects (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                lead_id INTEGER NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+                name TEXT NOT NULL DEFAULT 'Объект',
+                address TEXT NOT NULL DEFAULT '',
+                object_type TEXT NOT NULL DEFAULT 'Квартира',
+                budget TEXT NOT NULL DEFAULT 'lo',
+                work_types TEXT NOT NULL DEFAULT '[]',
+                description TEXT NOT NULL DEFAULT '',
+                deal_amount INTEGER,
+                sort_order INTEGER NOT NULL DEFAULT 0
+            )
+        """)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS notes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,6 +79,10 @@ def init_db() -> None:
                 created_at TEXT DEFAULT (datetime('now'))
             )
         """)
+        cur = conn.execute("PRAGMA table_info(notes)")
+        note_cols = [r[1] for r in cur.fetchall()]
+        if "lead_object_id" not in note_cols:
+            conn.execute("ALTER TABLE notes ADD COLUMN lead_object_id INTEGER REFERENCES lead_objects(id)")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -99,6 +119,25 @@ def _lead_row_to_dict(row: sqlite3.Row) -> dict:
         d["communication_done"] = False
     elif d["communication_done"] is not None:
         d["communication_done"] = bool(int(d["communication_done"]))
+    if "has_multiple_objects" not in d:
+        d["has_multiple_objects"] = False
+    elif d.get("has_multiple_objects") is not None:
+        d["has_multiple_objects"] = bool(int(d["has_multiple_objects"]))
+    return d
+
+
+def _lead_object_row_to_dict(row: sqlite3.Row) -> dict:
+    d = dict(row)
+    if "work_types" in d and isinstance(d.get("work_types"), str):
+        try:
+            d["work_types"] = json.loads(d["work_types"]) if d["work_types"] else []
+        except (json.JSONDecodeError, TypeError):
+            d["work_types"] = []
+    if "deal_amount" in d and d["deal_amount"] is not None:
+        try:
+            d["deal_amount"] = int(d["deal_amount"])
+        except (TypeError, ValueError):
+            d["deal_amount"] = None
     return d
 
 
@@ -120,7 +159,7 @@ def _get_last_message_per_lead() -> dict[int, dict]:
 def get_all_leads() -> list[dict]:
     with get_connection() as conn:
         cur = conn.execute(
-            "SELECT id, name, phone, extra_phones, avito_link, max_link, tg_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, communication_done, created_at FROM leads ORDER BY id"
+            "SELECT id, name, phone, extra_phones, avito_link, max_link, tg_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, communication_done, has_multiple_objects, created_at FROM leads ORDER BY id"
         )
         leads_list = [_lead_row_to_dict(r) for r in cur.fetchall()]
     last_msgs = _get_last_message_per_lead()
@@ -128,13 +167,20 @@ def get_all_leads() -> list[dict]:
         lm = last_msgs.get(lead["id"], {})
         lead["last_message_direction"] = lm.get("direction") or ""
         lead["last_message_date"] = lm.get("created_at") or ""
+        if lead.get("has_multiple_objects"):
+            objs = get_objects_by_lead_id(lead["id"])
+            lead["objects"] = objs
+            lead["effective_deal_amount"] = sum((o.get("deal_amount") or 0) for o in objs)
+        else:
+            lead["objects"] = []
+            lead["effective_deal_amount"] = lead.get("deal_amount") or 0
     return leads_list
 
 
 def get_lead_by_id(lead_id: int) -> dict | None:
     with get_connection() as conn:
         cur = conn.execute(
-            "SELECT id, name, phone, extra_phones, avito_link, max_link, tg_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, communication_done, created_at FROM leads WHERE id = ?",
+            "SELECT id, name, phone, extra_phones, avito_link, max_link, tg_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, communication_done, has_multiple_objects, created_at FROM leads WHERE id = ?",
             (lead_id,),
         )
         row = cur.fetchone()
@@ -145,11 +191,12 @@ def create_lead(lead: Lead) -> int:
     work_types_json = json.dumps(getattr(lead, "work_types", []) or [])
     description = getattr(lead, "description", "") or ""
     comm_done = 1 if getattr(lead, "communication_done", False) else 0
+    has_multi = 1 if getattr(lead, "has_multiple_objects", False) else 0
     with get_connection() as conn:
         deal_amount = getattr(lead, "deal_amount", None)
         cur = conn.execute(
-            """INSERT INTO leads (name, phone, extra_phones, avito_link, max_link, tg_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, communication_done)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO leads (name, phone, extra_phones, avito_link, max_link, tg_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, communication_done, has_multiple_objects)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 lead.name,
                 lead.phone,
@@ -167,6 +214,7 @@ def create_lead(lead: Lead) -> int:
                 description,
                 deal_amount,
                 comm_done,
+                has_multi,
             ),
         )
         conn.commit()
@@ -178,11 +226,12 @@ def update_lead(lead_id: int, lead: Lead) -> bool:
     description = getattr(lead, "description", "") or ""
     deal_amount = getattr(lead, "deal_amount", None)
     comm_done = 1 if getattr(lead, "communication_done", False) else 0
+    has_multi = 1 if getattr(lead, "has_multiple_objects", False) else 0
     with get_connection() as conn:
         cur = conn.execute(
             """UPDATE leads SET
                 name = ?, phone = ?, extra_phones = ?, avito_link = ?, max_link = ?, tg_link = ?, address = ?, object_type = ?, budget = ?, status = ?,
-                last_contact = ?, comment = ?, work_types = ?, description = ?, deal_amount = ?, communication_done = ?
+                last_contact = ?, comment = ?, work_types = ?, description = ?, deal_amount = ?, communication_done = ?, has_multiple_objects = ?
                WHERE id = ?""",
             (
                 lead.name,
@@ -201,6 +250,7 @@ def update_lead(lead_id: int, lead: Lead) -> bool:
                 description,
                 deal_amount,
                 comm_done,
+                has_multi,
                 lead_id,
             ),
         )
@@ -215,21 +265,142 @@ def delete_lead(lead_id: int) -> bool:
         return cur.rowcount > 0
 
 
-def get_notes_by_lead_id(lead_id: int) -> list[dict]:
+def get_objects_by_lead_id(lead_id: int) -> list[dict]:
     with get_connection() as conn:
         cur = conn.execute(
-            "SELECT id, lead_id, text, created_at FROM notes WHERE lead_id = ? ORDER BY created_at DESC",
+            "SELECT id, lead_id, name, address, object_type, budget, work_types, description, deal_amount, sort_order FROM lead_objects WHERE lead_id = ? ORDER BY sort_order, id",
             (lead_id,),
         )
-        return [_row_to_dict(r) for r in cur.fetchall()]
+        return [_lead_object_row_to_dict(r) for r in cur.fetchall()]
 
 
-def create_note(lead_id: int, note: NoteCreate) -> int:
+def get_object_by_id(object_id: int) -> dict | None:
     with get_connection() as conn:
         cur = conn.execute(
-            "INSERT INTO notes (lead_id, text) VALUES (?, ?)",
-            (lead_id, note.text),
+            "SELECT id, lead_id, name, address, object_type, budget, work_types, description, deal_amount, sort_order FROM lead_objects WHERE id = ?",
+            (object_id,),
         )
+        row = cur.fetchone()
+        return _lead_object_row_to_dict(row) if row else None
+
+
+def create_lead_object(lead_id: int, obj: LeadObjectCreate) -> int:
+    work_types_json = json.dumps(getattr(obj, "work_types", []) or [])
+    with get_connection() as conn:
+        cur = conn.execute(
+            """INSERT INTO lead_objects (lead_id, name, address, object_type, budget, work_types, description, deal_amount, sort_order)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                lead_id,
+                obj.name or "Объект",
+                obj.address or "",
+                obj.object_type or "Квартира",
+                obj.budget or "lo",
+                work_types_json,
+                obj.description or "",
+                obj.deal_amount,
+                getattr(obj, "sort_order", 0) or 0,
+            ),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def update_lead_object(object_id: int, obj: LeadObjectCreate | dict) -> bool:
+    if isinstance(obj, dict):
+        name = obj.get("name", "Объект")
+        address = obj.get("address", "")
+        object_type = obj.get("object_type", "Квартира")
+        budget = obj.get("budget", "lo")
+        work_types = obj.get("work_types", [])
+        description = obj.get("description", "")
+        deal_amount = obj.get("deal_amount")
+        sort_order = obj.get("sort_order", 0)
+    else:
+        name = obj.name or "Объект"
+        address = obj.address or ""
+        object_type = obj.object_type or "Квартира"
+        budget = obj.budget or "lo"
+        work_types = getattr(obj, "work_types", []) or []
+        description = obj.description or ""
+        deal_amount = obj.deal_amount
+        sort_order = getattr(obj, "sort_order", 0) or 0
+    work_types_json = json.dumps(work_types) if isinstance(work_types, list) else work_types
+    with get_connection() as conn:
+        cur = conn.execute(
+            """UPDATE lead_objects SET name = ?, address = ?, object_type = ?, budget = ?, work_types = ?, description = ?, deal_amount = ?, sort_order = ? WHERE id = ?""",
+            (name, address, object_type, budget, work_types_json, description, deal_amount, sort_order, object_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def delete_lead_object(object_id: int) -> bool:
+    with get_connection() as conn:
+        conn.execute("UPDATE notes SET lead_object_id = NULL WHERE lead_object_id = ?", (object_id,))
+        cur = conn.execute("DELETE FROM lead_objects WHERE id = ?", (object_id,))
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def migrate_lead_to_first_object(lead_id: int) -> int | None:
+    """Создаёт первый объект из данных лида и привязывает к нему заметки. Возвращает id созданного объекта или None."""
+    lead = get_lead_by_id(lead_id)
+    if not lead:
+        return None
+    with get_connection() as conn:
+        work_types_json = lead.get("work_types") or []
+        if isinstance(work_types_json, list):
+            work_types_json = json.dumps(work_types_json)
+        cur = conn.execute(
+            """INSERT INTO lead_objects (lead_id, name, address, object_type, budget, work_types, description, deal_amount, sort_order)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)""",
+            (
+                lead_id,
+                "Объект 1",
+                lead.get("address") or "",
+                lead.get("object_type") or "Квартира",
+                lead.get("budget") or "lo",
+                work_types_json,
+                lead.get("description") or "",
+                lead.get("deal_amount"),
+            ),
+        )
+        obj_id = cur.lastrowid
+        conn.execute("UPDATE notes SET lead_object_id = ? WHERE lead_id = ? AND (lead_object_id IS NULL OR lead_object_id = 0)", (obj_id, lead_id))
+        conn.commit()
+    return obj_id
+
+
+def get_notes_by_lead_id(lead_id: int, lead_object_id: int | None = None) -> list[dict]:
+    with get_connection() as conn:
+        if lead_object_id is not None:
+            cur = conn.execute(
+                "SELECT id, lead_id, lead_object_id, text, created_at FROM notes WHERE lead_id = ? AND lead_object_id = ? ORDER BY created_at DESC",
+                (lead_id, lead_object_id),
+            )
+        else:
+            cur = conn.execute(
+                "SELECT id, lead_id, lead_object_id, text, created_at FROM notes WHERE lead_id = ? AND (lead_object_id IS NULL OR lead_object_id = 0) ORDER BY created_at DESC",
+                (lead_id,),
+            )
+        rows = cur.fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def create_note(lead_id: int, note: NoteCreate, lead_object_id: int | None = None) -> int:
+    obj_id = getattr(note, "lead_object_id", None) or lead_object_id
+    with get_connection() as conn:
+        if obj_id is not None:
+            cur = conn.execute(
+                "INSERT INTO notes (lead_id, lead_object_id, text) VALUES (?, ?, ?)",
+                (lead_id, obj_id, note.text),
+            )
+        else:
+            cur = conn.execute(
+                "INSERT INTO notes (lead_id, text) VALUES (?, ?)",
+                (lead_id, note.text),
+            )
         conn.commit()
         return cur.lastrowid
 
@@ -237,7 +408,7 @@ def create_note(lead_id: int, note: NoteCreate) -> int:
 def get_note_by_id(note_id: int) -> dict | None:
     with get_connection() as conn:
         cur = conn.execute(
-            "SELECT id, lead_id, text, created_at FROM notes WHERE id = ?",
+            "SELECT id, lead_id, lead_object_id, text, created_at FROM notes WHERE id = ?",
             (note_id,),
         )
         row = cur.fetchone()

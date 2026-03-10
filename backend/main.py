@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend import database
-from backend.models import Lead, NoteCreate, MessageCreate, MessageBulkItem, MessageDirectionUpdate
+from backend.models import Lead, LeadObjectCreate, NoteCreate, MessageCreate, MessageBulkItem, MessageDirectionUpdate
 from backend import grs_ai
 
 app = FastAPI()
@@ -98,6 +98,10 @@ def get_lead(lead_id: int):
     lead = database.get_lead_by_id(lead_id)
     if lead is None:
         raise HTTPException(status_code=404, detail="Lead not found")
+    if lead.get("has_multiple_objects"):
+        lead["objects"] = database.get_objects_by_lead_id(lead_id)
+    else:
+        lead["objects"] = []
     return lead
 
 
@@ -112,8 +116,18 @@ def create_lead(lead: Lead):
 def update_lead(lead_id: int, lead: Lead):
     if database.get_lead_by_id(lead_id) is None:
         raise HTTPException(status_code=404, detail="Lead not found")
+    prev = database.get_lead_by_id(lead_id)
     database.update_lead(lead_id, lead)
-    return database.get_lead_by_id(lead_id)
+    if getattr(lead, "has_multiple_objects", False) and not (prev and prev.get("has_multiple_objects")):
+        objs = database.get_objects_by_lead_id(lead_id)
+        if not objs:
+            database.migrate_lead_to_first_object(lead_id)
+    updated = database.get_lead_by_id(lead_id)
+    if updated.get("has_multiple_objects"):
+        updated["objects"] = database.get_objects_by_lead_id(lead_id)
+    else:
+        updated["objects"] = []
+    return updated
 
 
 @app.delete("/api/leads/{lead_id}")
@@ -125,19 +139,52 @@ def delete_lead(lead_id: int):
 
 
 @app.get("/api/leads/{lead_id}/notes")
-def list_notes(lead_id: int):
+def list_notes(lead_id: int, lead_object_id: int | None = None):
     if database.get_lead_by_id(lead_id) is None:
         raise HTTPException(status_code=404, detail="Lead not found")
-    return database.get_notes_by_lead_id(lead_id)
+    return database.get_notes_by_lead_id(lead_id, lead_object_id=lead_object_id)
 
 
 @app.post("/api/leads/{lead_id}/notes")
 def create_note(lead_id: int, body: NoteCreate):
     if database.get_lead_by_id(lead_id) is None:
         raise HTTPException(status_code=404, detail="Lead not found")
-    note_id = database.create_note(lead_id, body)
+    note_id = database.create_note(lead_id, body, lead_object_id=getattr(body, "lead_object_id", None))
     created = database.get_note_by_id(note_id)
     return created
+
+
+@app.get("/api/leads/{lead_id}/objects")
+def list_objects(lead_id: int):
+    if database.get_lead_by_id(lead_id) is None:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    return database.get_objects_by_lead_id(lead_id)
+
+
+@app.post("/api/leads/{lead_id}/objects")
+def create_object(lead_id: int, body: LeadObjectCreate):
+    if database.get_lead_by_id(lead_id) is None:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    obj_id = database.create_lead_object(lead_id, body)
+    return database.get_object_by_id(obj_id)
+
+
+@app.put("/api/leads/{lead_id}/objects/{object_id}")
+def update_object(lead_id: int, object_id: int, body: LeadObjectCreate | dict):
+    obj = database.get_object_by_id(object_id)
+    if obj is None or obj.get("lead_id") != lead_id:
+        raise HTTPException(status_code=404, detail="Object not found")
+    database.update_lead_object(object_id, body)
+    return database.get_object_by_id(object_id)
+
+
+@app.delete("/api/leads/{lead_id}/objects/{object_id}")
+def delete_object(lead_id: int, object_id: int):
+    obj = database.get_object_by_id(object_id)
+    if obj is None or obj.get("lead_id") != lead_id:
+        raise HTTPException(status_code=404, detail="Object not found")
+    database.delete_lead_object(object_id)
+    return {"ok": True}
 
 
 @app.delete("/api/notes/{note_id}")

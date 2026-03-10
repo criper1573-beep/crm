@@ -237,6 +237,14 @@ header::before {
 .d-sub-phone:hover{color:var(--accent);text-decoration:underline;}
 .dbtn-tel{text-decoration:none;color:inherit;display:inline-block;}
 .dbtn-tel:hover{color:inherit;}
+.d-header-center{flex:1;min-width:0;}
+.d-sub-header{margin-top:2px;}
+.d-header-toggle{display:inline-flex;align-items:center;gap:6px;font-size:9px;color:var(--text2);cursor:pointer;}
+.d-header-toggle .toggle-label{white-space:nowrap;}
+.d-header-edit-fields{display:flex;flex-wrap:wrap;gap:8px;align-items:center;flex:1;min-width:0;}
+.d-header-edit-input,.d-header-edit-select{background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:6px 8px;color:var(--text);font-size:10px;font-family:inherit;}
+.d-header-edit-input{min-width:120px;}
+.d-header-edit-select{min-width:100px;}
 .d-actions{margin-left:auto;display:flex;gap:6px;}
 .dbtn{
   font-size:9px;padding:6px 12px;border-radius:4px;
@@ -363,7 +371,21 @@ header::before {
 .notes-feed{margin-top:16px;}
 .overview-block{margin-bottom:16px;}
 .overview-block-title{font-family:'Unbounded',sans-serif;font-size:11px;font-weight:600;margin-bottom:8px;color:var(--text);}
+.work-types-toggle{cursor:pointer;user-select:none;}
+.work-types-toggle:hover{color:var(--accent);}
 .work-types-row{display:flex;flex-wrap:wrap;gap:10px 16px;}
+.work-types-body.collapsed{display:none;}
+.overview-object-switcher{margin-bottom:14px;}
+.overview-object-switcher .rp-sec{font-size:10px;color:var(--muted);margin-bottom:6px;}
+.object-tabs{display:flex;flex-wrap:wrap;gap:6px;}
+.object-tab{font-size:10px;padding:6px 10px;}
+.object-tab.active{background:var(--accent);color:var(--bg);border-color:var(--accent);}
+.object-tab-add{opacity:0.8;}
+.object-tab-add:hover{opacity:1;}
+.object-tab-wrap{display:inline-flex;align-items:center;gap:2px;}
+.object-tab-edit,.object-tab-del{font-size:10px;padding:2px 4px;min-width:22px;background:transparent;border:none;color:var(--muted);cursor:pointer;}
+.object-tab-edit:hover,.object-tab-del:hover{color:var(--text);}
+.object-tab-del:hover{color:var(--hot);}
 .work-type-cb{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--text2);cursor:pointer;}
 .work-type-cb input{cursor:pointer;}
 .overview-desc-block .overview-block-title{font-size:8px;letter-spacing:.1em;color:var(--muted);text-transform:uppercase;}

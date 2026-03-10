@@ -96,6 +96,7 @@ function getLeadPayloadForUpdate(l, overrides = {}) {
     description: l.description ?? '',
     deal_amount: l.deal_amount != null ? (typeof l.deal_amount === 'number' ? l.deal_amount : parseInt(l.deal_amount, 10) || null) : null,
     communication_done: !!l.communication_done,
+    has_multiple_objects: !!l.has_multiple_objects,
     ...overrides,
   };
 }
@@ -442,6 +443,8 @@ let activeId = null;
 let activeTab = 'overview';
 let currentFilter = 'all';
 let currentPeriod = 'month';
+let activeObjectId = null;
+let headerEditMode = false;
 
 function saveState() {
   try {
@@ -450,6 +453,7 @@ function saveState() {
       activeTab,
       currentFilter,
       currentPeriod,
+      activeObjectId,
     }));
   } catch (e) {}
 }
@@ -463,6 +467,7 @@ function loadState() {
     if (s.currentFilter) currentFilter = s.currentFilter;
     if (s.activeId != null) activeId = s.activeId;
     if (s.activeTab) activeTab = s.activeTab;
+    if (s.activeObjectId != null) activeObjectId = s.activeObjectId;
   } catch (e) {}
 }
 
@@ -538,7 +543,7 @@ function updateStats() {
 
   const revenue = leadsForPeriod
     .filter(l => l.status === 'client' || l.status === 'repeat')
-    .reduce((sum, l) => sum + (Number(l.deal_amount) || 0), 0);
+    .reduce((sum, l) => sum + (Number(l.effective_deal_amount ?? l.deal_amount) || 0), 0);
   const revenueEl = document.getElementById('revenueTotal');
   if (revenueEl) revenueEl.textContent = formatDealAmount(revenue) || '0 ₽';
 
@@ -709,10 +714,118 @@ function closeMobilePanels() {
 function openLead(id) {
   activeId = id;
   activeTab = 'overview';
+  headerEditMode = false;
+  const l = leads.find(x => x.id === id);
+  if (l && l.has_multiple_objects && l.objects && l.objects.length) {
+    activeObjectId = l.objects[0].id;
+  } else {
+    activeObjectId = null;
+  }
   saveState();
   closeMobilePanels();
   renderList();
   renderDetail();
+}
+
+function renderHeaderView(l) {
+  const si = getStatusInfo(l.status);
+  return `
+    <div class="d-avatar">${(l.name || ' ')[0]}</div>
+    <div class="d-header-center">
+      <div class="d-name-wrap" id="dNameWrap-${l.id}"><span class="d-name d-name-editable" data-lead-id="${l.id}" onclick="startEditLeadName(${l.id})" title="Нажмите для редактирования">${escapeHtml(l.name || '')}</span></div>
+      <div class="d-sub d-sub-header">
+        ${l.phone ? `<a href="tel:${(l.phone).replace(/[^\d+]/g, '')}" class="d-sub-phone" title="Позвонить">📞 ${escapeHtml(l.phone)}</a>` : ''}
+        <span class="sbadge ${si.cls}">${si.label}</span>
+      </div>
+    </div>
+    <div class="d-actions">
+      ${l.phone ? `<a href="tel:${(l.phone).replace(/[^\d+]/g, '')}" class="dbtn dbtn-tel" title="Позвонить">📞</a>` : ''}
+      ${(l.avito_link || l.link) ? `<a href="${escapeHtml((l.avito_link || l.link).trim())}" target="_blank" rel="noopener" class="dbtn">🔗 Авито</a>` : ''}
+      ${(() => { const u = (l.max_link || '').trim(); return u && (u.startsWith('http://') || u.startsWith('https://')) ? `<a href="${escapeHtml(u)}" target="_blank" rel="noopener" class="dbtn">МАХ</a>` : ''; })()}
+      ${(l.tg_link || '').trim() ? `<a href="${normalizeTgLink(l.tg_link)}" target="_blank" rel="noopener" class="dbtn dbtn-tel">TG</a>` : ''}
+      <div class="status-dropdown" id="statusDropdown">
+        <button type="button" class="dbtn" onclick="toggleStatusDropdown(event)">${si.label} ▼</button>
+        <div class="status-dropdown-menu" id="statusDropdownMenu">
+          ${Object.entries(CONFIG.statuses).map(([k, v]) => `<button type="button" class="status-dropdown-item" data-status="${k}" style="color:${v.color};--status-bg:${v.bg}" onclick="selectStatus(${l.id}, '${k}', event)"><span class="status-dropdown-dot" style="background:${v.color}"></span>${v.label}</button>`).join('')}
+        </div>
+      </div>
+      <button type="button" class="dbtn" onclick="toggleHeaderEdit()">Редактировать</button>
+      <label class="toggle-wrap d-header-toggle" title="У клиента несколько объектов"><input type="checkbox" ${l.has_multiple_objects ? 'checked' : ''} onchange="toggleHasMultipleObjects(${l.id}, this.checked)"><span class="toggle-slider"></span><span class="toggle-label">Несколько объектов</span></label>
+      <button type="button" class="dbtn" onclick="deleteLead(${l.id})" style="color:var(--hot);border-color:rgba(255,77,109,0.5)">Удалить лид</button>
+    </div>`;
+}
+
+function renderHeaderEdit(l) {
+  const statusOpts = CONFIG.statuses ? Object.entries(CONFIG.statuses).map(([k, v]) => `<option value="${escapeHtml(k)}" ${l.status === k ? 'selected' : ''}>${escapeHtml(v.label)}</option>`).join('') : '';
+  return `
+    <div class="d-avatar">${(l.name || ' ')[0]}</div>
+    <div class="d-header-edit-fields">
+      <input type="text" id="headerEditName" class="d-header-edit-input" value="${escapeHtml(l.name || '')}" placeholder="Имя">
+      <input type="text" id="headerEditPhone" class="d-header-edit-input" value="${escapeHtml(l.phone || '')}" placeholder="Телефон">
+      <input type="text" id="headerEditAvito" class="d-header-edit-input" value="${escapeHtml((l.avito_link || l.link || '').trim())}" placeholder="Ссылка Авито">
+      <input type="text" id="headerEditMax" class="d-header-edit-input" value="${escapeHtml((l.max_link || '').trim())}" placeholder="Ссылка МАХ">
+      <input type="text" id="headerEditTg" class="d-header-edit-input" value="${escapeHtml((l.tg_link || '').trim())}" placeholder="Ссылка TG">
+      <select id="headerEditStatus" class="d-header-edit-select">${statusOpts}</select>
+    </div>
+    <div class="d-actions">
+      <button type="button" class="dbtn primary" onclick="saveHeaderEdit(${l.id})">Сохранить</button>
+      <button type="button" class="dbtn" onclick="cancelHeaderEdit()">Отмена</button>
+    </div>`;
+}
+
+function toggleHeaderEdit() {
+  headerEditMode = true;
+  renderDetail();
+}
+
+function cancelHeaderEdit() {
+  headerEditMode = false;
+  renderDetail();
+}
+
+async function saveHeaderEdit(leadId) {
+  const l = leads.find(x => x.id === leadId);
+  if (!l) return;
+  const name = (document.getElementById('headerEditName') && document.getElementById('headerEditName').value || '').trim();
+  const phone = (document.getElementById('headerEditPhone') && document.getElementById('headerEditPhone').value || '').trim();
+  const avito_link = (document.getElementById('headerEditAvito') && document.getElementById('headerEditAvito').value || '').trim();
+  const max_link = (document.getElementById('headerEditMax') && document.getElementById('headerEditMax').value || '').trim();
+  const tg_link = (document.getElementById('headerEditTg') && document.getElementById('headerEditTg').value || '').trim();
+  const statusEl = document.getElementById('headerEditStatus');
+  const status = statusEl ? statusEl.value : l.status;
+  const payload = getLeadPayloadForUpdate(l, { name: name || l.name, phone, avito_link, max_link, tg_link, status });
+  const updated = await apiUpdateLead(leadId, payload);
+  if (updated) {
+    l.name = payload.name;
+    l.phone = payload.phone;
+    l.avito_link = payload.avito_link;
+    l.max_link = payload.max_link;
+    l.tg_link = payload.tg_link;
+    l.status = payload.status;
+    l.link = payload.avito_link;
+    headerEditMode = false;
+    renderDetail();
+    renderList();
+    updateStats();
+  }
+}
+
+async function toggleHasMultipleObjects(leadId, checked) {
+  const l = leads.find(x => x.id === leadId);
+  if (!l) return;
+  const payload = getLeadPayloadForUpdate(l, { has_multiple_objects: checked });
+  const updated = await apiUpdateLead(leadId, payload);
+  if (updated) {
+    l.has_multiple_objects = !!checked;
+    if (updated.objects) l.objects = updated.objects;
+    if (checked && (!l.objects || l.objects.length === 0) && updated.objects && updated.objects.length > 0) {
+      activeObjectId = updated.objects[0].id;
+    } else if (!checked) {
+      activeObjectId = null;
+    }
+    saveState();
+    renderDetail();
+  }
 }
 
 function renderDetail() {
@@ -722,35 +835,10 @@ function renderDetail() {
   const bi = BUDGET[l.budget];
   const detail = document.getElementById('detail');
 
+  const headerHtml = headerEditMode ? renderHeaderEdit(l) : renderHeaderView(l);
   detail.innerHTML = `
-    <div class="detail-header fade-in">
-      <div class="d-avatar">${l.name[0]}</div>
-      <div>
-        <div class="d-name-wrap" id="dNameWrap-${l.id}"><span class="d-name d-name-editable" data-lead-id="${l.id}" onclick="startEditLeadName(${l.id})" title="Нажмите для редактирования">${escapeHtml(l.name)}</span></div>
-        <div class="d-sub">
-          ${l.address ? `<span>📍 ${escapeHtml(l.address)}</span><a href="https://yandex.ru/maps/?text=${encodeURIComponent(l.address)}" target="_blank" rel="noopener" class="ymaps-link" title="Открыть в Яндекс Картах">🗺️</a>` : ''}
-          ${l.phone ? `<a href="tel:${(l.phone).replace(/[^\d+]/g, '')}" class="d-sub-phone" title="Позвонить">📞 ${escapeHtml(l.phone)}</a>` : ''}
-          <span class="sbadge ${si.cls}">${si.label}</span>
-          ${bi ? `<span class="btag ${bi.cls}">${bi.label}</span>` : ''}
-          ${l.obj ? `<span class="otag">${l.obj}</span>` : ''}
-          <span style="color:var(--muted);font-size:9px" title="Последний контакт">${l.date}</span>
-          <span style="color:var(--muted);font-size:9px" title="Дата появления лида">📅 Появился: ${formatCreatedDate(l.created_at)}</span>
-        </div>
-      </div>
-      <div class="d-actions">
-        ${l.phone ? `<a href="tel:${(l.phone).replace(/[^\d+]/g, '')}" class="dbtn dbtn-tel" title="Позвонить">📞 ${escapeHtml(l.phone)}</a>` : ''}
-        ${(l.avito_link || l.link) ? `<a href="${escapeHtml((l.avito_link || l.link).trim())}" target="_blank" rel="noopener" style="text-decoration:none"><button class="dbtn">🔗 Авито</button></a>` : `<button class="dbtn" disabled style="opacity:0.5;cursor:not-allowed;color:var(--muted)">🔗 Авито</button>`}
-        ${(() => { const u = (l.max_link || '').trim(); return u && (u.startsWith('http://') || u.startsWith('https://')) ? `<a href="${escapeHtml(u)}" target="_blank" rel="noopener" class="dbtn" title="МАХ">МАХ</a>` : ''; })()}
-        ${(l.tg_link || '').trim() ? `<a href="${normalizeTgLink(l.tg_link)}" target="_blank" rel="noopener" class="dbtn dbtn-tel" title="Telegram">TG</a>` : ''}
-        <div class="status-dropdown" id="statusDropdown">
-          <button type="button" class="dbtn" onclick="toggleStatusDropdown(event)">${si.label} ▼</button>
-          <div class="status-dropdown-menu" id="statusDropdownMenu">
-            ${Object.entries(CONFIG.statuses).map(([k, v]) => `<button type="button" class="status-dropdown-item" data-status="${k}" style="color:${v.color};--status-bg:${v.bg}" onclick="selectStatus(${l.id}, '${k}', event)"><span class="status-dropdown-dot" style="background:${v.color}"></span>${v.label}</button>`).join('')}
-          </div>
-        </div>
-        <button class="dbtn primary" onclick="switchTab('msgs')">💬 Ответить</button>
-        <button type="button" class="dbtn" onclick="deleteLead(${l.id})" style="color:var(--hot);border-color:rgba(255,77,109,0.5)">Удалить лид</button>
-      </div>
+    <div class="detail-header fade-in" id="detailHeader">
+      ${headerHtml}
     </div>
     <div class="dtabs">
       <div class="dtab ${activeTab==='overview'?'active':''}" onclick="switchTab('overview')">🗂 Обзор</div>
@@ -759,7 +847,7 @@ function renderDetail() {
     </div>
     <div class="tab-body fade-in" id="tabBody">${renderTab(l)}</div>
   `;
-  if (activeTab === 'overview') setTimeout(() => loadNotesIntoFeed(activeId), 0);
+  if (activeTab === 'overview') setTimeout(() => loadNotesIntoFeed(activeId, activeObjectId), 0);
   if (activeTab === 'msgs') setTimeout(() => loadMessagesIntoFeed(activeId), 0);
 }
 
@@ -776,7 +864,7 @@ function switchTab(tab) {
   const tb = document.getElementById('tabBody');
   tb.innerHTML = renderTab(l);
   tb.classList.remove('fade-in'); void tb.offsetWidth; tb.classList.add('fade-in');
-  if (tab === 'overview') loadNotesIntoFeed(activeId);
+  if (tab === 'overview') loadNotesIntoFeed(activeId, activeObjectId);
   if (tab === 'msgs') setTimeout(() => loadMessagesIntoFeed(activeId), 0);
 }
 
@@ -793,21 +881,18 @@ async function loadLastContactFromMessages(leadId) {
   }
 }
 
-function initDescriptionBlur(leadId) {
-  const ta = document.getElementById('descriptionTa-' + leadId);
+function initDescriptionBlur(leadId, objectId = null) {
+  const suffix = objectId != null ? objectId : 'l';
+  const ta = document.getElementById('descriptionTa-' + leadId + '-' + suffix);
   if (!ta || ta.dataset.blurInited) return;
   ta.dataset.blurInited = '1';
   ta.addEventListener('blur', async function onBlur() {
     const l = leads.find(x => x.id === leadId);
     if (!l) return;
     const value = ta.value.trim();
-    if (String(l.description || '') === value) return;
-    const payload = getLeadPayloadForUpdate(l, { description: value });
-    const updated = await apiUpdateLead(leadId, payload);
-    if (updated) {
-      l.description = value;
-      showSaveIndicator('cardField-' + leadId + '-description');
-    }
+    const cur = objectId != null ? (l.objects || []).find(o => o.id === objectId) : l;
+    if (!cur || String(cur.description || '') === value) return;
+    await updateOverviewField(leadId, objectId, 'description', value);
   });
 }
 
@@ -831,9 +916,14 @@ async function requestLeadSummary(leadId) {
       startSummaryPolling(leadId);
     } else if (res && res.description != null) {
       l.description = res.description;
-      const ta = document.getElementById('descriptionTa-' + leadId);
+      const suffix = activeObjectId != null ? activeObjectId : 'l';
+      if (l.has_multiple_objects && activeObjectId) {
+        const obj = (l.objects || []).find(o => o.id === activeObjectId);
+        if (obj) { obj.description = res.description; apiUpdateObject(leadId, activeObjectId, { ...obj, description: res.description }); }
+      }
+      const ta = document.getElementById('descriptionTa-' + leadId + '-' + suffix);
       if (ta) ta.value = res.description;
-      showSaveIndicator('cardField-' + leadId + '-description');
+      showSaveIndicator('cardField-' + leadId + '-' + suffix + '-description');
     }
   } catch (e) {
     alert(e.message || 'Ошибка при запуске генерации резюме');
@@ -857,9 +947,14 @@ function startSummaryPolling(leadId) {
     const updated = await apiGetLead(leadId);
     if (updated && updated.description && String(updated.description).trim() !== String(l.description || '').trim()) {
       l.description = updated.description;
-      const ta = document.getElementById('descriptionTa-' + leadId);
+      if (l.has_multiple_objects && activeObjectId) {
+        const obj = (l.objects || []).find(o => o.id === activeObjectId);
+        if (obj) { obj.description = updated.description; apiUpdateObject(leadId, activeObjectId, { ...obj, description: updated.description }); }
+      }
+      const suffix = activeObjectId != null ? activeObjectId : 'l';
+      const ta = document.getElementById('descriptionTa-' + leadId + '-' + suffix);
       if (ta) ta.value = updated.description;
-      showSaveIndicator('cardField-' + leadId + '-description');
+      showSaveIndicator('cardField-' + leadId + '-' + suffix + '-description');
       clearInterval(timer);
     }
   }, intervalMs);
@@ -963,20 +1058,22 @@ async function updateLeadField(leadId, field, value) {
   }
 }
 
-async function loadNotesIntoFeed(leadId) {
+async function loadNotesIntoFeed(leadId, objectId = null) {
   loadLastContactFromMessages(leadId);
-  initDescriptionBlur(leadId);
-  const el = document.getElementById('notesList-' + leadId);
+  const suffix = objectId != null ? objectId : 'l';
+  initDescriptionBlur(leadId, objectId);
+  const el = document.getElementById('notesList-' + leadId + '-' + suffix);
   if (!el) return;
-  const notes = await apiGetNotes(leadId);
+  const notes = await apiGetNotes(leadId, objectId);
   if (notes === null) { el.textContent = 'Ошибка загрузки'; return; }
   if (!notes.length) { el.innerHTML = '<div class="notes-empty">Нет заметок</div>'; return; }
+  const objParam = objectId != null ? objectId : 'null';
   el.innerHTML = notes.map(n => {
     const dt = formatNoteDate(n.created_at);
     return `<div class="note-item" data-note-id="${n.id}">
       <span class="note-date">${escapeHtml(dt)}</span>
       <span class="note-text">${escapeHtml(n.text)}</span>
-      <button type="button" class="note-delete" onclick="deleteNote(${n.id}, ${leadId})" title="Удалить">×</button>
+      <button type="button" class="note-delete" onclick="deleteNote(${n.id}, ${leadId}, ${objParam})" title="Удалить">×</button>
     </div>`;
   }).join('');
 }
@@ -1001,21 +1098,16 @@ function formatCreatedDate(createdAt) {
   return s.slice(0, 10) || '—';
 }
 
-async function addNote(leadId) {
-  const input = document.getElementById('noteInput-' + leadId);
-  if (!input) return;
-  const text = input.value.trim();
-  if (!text) return;
-  const created = await apiCreateNote(leadId, text);
+async function addNote(leadId, text, objectId = null) {
+  const created = await apiCreateNote(leadId, text, objectId);
   if (!created) return;
-  input.value = '';
-  loadNotesIntoFeed(leadId);
+  loadNotesIntoFeed(leadId, objectId);
 }
 
-async function deleteNote(noteId, leadId) {
+async function deleteNote(noteId, leadId, objectId = null) {
   const ok = await apiDeleteNote(noteId);
   if (!ok) return;
-  loadNotesIntoFeed(leadId);
+  loadNotesIntoFeed(leadId, objectId);
 }
 
 function renderTab(l) {
@@ -1025,65 +1117,111 @@ function renderTab(l) {
   return '';
 }
 
+function getOverviewDisplayData(l) {
+  if (!l.has_multiple_objects || !l.objects || !l.objects.length) {
+    return { leadId: l.id, objectId: null, data: l, isLead: true };
+  }
+  const obj = activeObjectId ? l.objects.find(o => o.id === activeObjectId) : null;
+  const sel = obj || l.objects[0];
+  if (sel && sel.id) activeObjectId = sel.id;
+  const data = { ...sel, communication_done: l.communication_done };
+  return { leadId: l.id, objectId: sel ? sel.id : null, data, isLead: false };
+}
+
+async function updateOverviewField(leadId, objectId, field, value) {
+  const l = leads.find(x => x.id === leadId);
+  if (!l) return;
+  if (field === 'communication_done') {
+    const payload = getLeadPayloadForUpdate(l, { [field]: value });
+    const updated = await apiUpdateLead(leadId, payload);
+    if (updated) { l.communication_done = !!value; showSaveIndicator('cardField-' + leadId + '-communication_done'); updateStats(); }
+    return;
+  }
+  const suffix = objectId != null ? objectId : 'l';
+  if (objectId != null) {
+    const obj = (l.objects || []).find(o => o.id === objectId);
+    if (!obj) return;
+    const body = { ...obj, [field]: value };
+    const updated = await apiUpdateObject(leadId, objectId, body);
+    if (updated) { Object.assign(obj, updated); showSaveIndicator('cardField-' + leadId + '-' + suffix + '-' + field); updateStats(); }
+  } else {
+    const payload = getLeadPayloadForUpdate(l, { [field]: value });
+    const updated = await apiUpdateLead(leadId, payload);
+    if (updated) { l[field] = value; showSaveIndicator('cardField-' + leadId + '-' + suffix + '-' + field); updateStats(); }
+  }
+}
+
 // OVERVIEW
 const workTypesList = () => (CONFIG.workTypes || []);
 
 function renderOverview(l) {
+  const { leadId, objectId, data, isLead } = getOverviewDisplayData(l);
   const si = getStatusInfo(l.status);
   const lastMsg = (l.msgs && l.msgs.length) ? l.msgs[l.msgs.length-1] : null;
-  const wtArr = Array.isArray(l.work_types) ? l.work_types : [];
+  const wtArr = Array.isArray(data.work_types) ? data.work_types : [];
   const workTypesHtml = workTypesList().map(wt => {
     const checked = wtArr.includes(wt);
     const wtEsc = String(wt).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-    return `<label class="work-type-cb"><input type="checkbox" ${checked ? 'checked' : ''} onchange="toggleWorkType(${l.id}, '${wtEsc}', this.checked)"> ${escapeHtml(wt)}</label>`;
+    return `<label class="work-type-cb"><input type="checkbox" ${checked ? 'checked' : ''} onchange="toggleOverviewWorkType(${leadId}, ${objectId || 'null'}, '${wtEsc}', this.checked)"> ${escapeHtml(wt)}</label>`;
   }).join('');
-  const statusOpts = CONFIG.statuses ? Object.entries(CONFIG.statuses).map(([k, v]) => `<option value="${escapeHtml(k)}" data-status="${escapeHtml(k)}" ${l.status === k ? 'selected' : ''}>${escapeHtml(v.label)}</option>`).join('') : '';
-  const budgetOpts = CONFIG.budgets ? Object.entries(CONFIG.budgets).map(([k, v]) => `<option value="${escapeHtml(k)}" ${l.budget === k ? 'selected' : ''}>${escapeHtml(v.label)}</option>`).join('') : '';
-  const objectOpts = CONFIG.objectTypes ? CONFIG.objectTypes.map(t => `<option value="${escapeHtml(t)}" ${(l.object_type || l.obj) === t ? 'selected' : ''}>${escapeHtml(t)}</option>`).join('') : '';
+  const budgetOpts = CONFIG.budgets ? Object.entries(CONFIG.budgets).map(([k, v]) => `<option value="${escapeHtml(k)}" ${data.budget === k ? 'selected' : ''}>${escapeHtml(v.label)}</option>`).join('') : '';
+  const objectOpts = CONFIG.objectTypes ? CONFIG.objectTypes.map(t => `<option value="${escapeHtml(t)}" ${(data.object_type || data.obj) === t ? 'selected' : ''}>${escapeHtml(t)}</option>`).join('') : '';
   const showDealAmount = l.status === 'client' || l.status === 'repeat';
-  const dealAmountFormatted = formatDealAmount(l.deal_amount);
+  const dealAmountFormatted = formatDealAmount(data.deal_amount);
   const dealAmountRowWithId = showDealAmount
-    ? `<div class="ai-field" id="cardField-${l.id}-deal_amount"><div class="aif-label">Сумма сделки</div><input type="text" class="aif-edit-input" id="dealAmountInput-${l.id}" value="${escapeHtml(dealAmountFormatted)}" placeholder="Введите сумму сметы" data-lead-id="${l.id}" oninput="filterDealAmountInput(this)" onblur="saveDealAmountOnBlur(this)"></div>`
+    ? `<div class="ai-field" id="cardField-${leadId}-${objectId || 'l'}-deal_amount"><div class="aif-label">Сумма сделки</div><input type="text" class="aif-edit-input" value="${escapeHtml(dealAmountFormatted)}" placeholder="Введите сумму сметы" data-lead-id="${leadId}" data-object-id="${objectId || ''}" oninput="filterDealAmountInput(this)" onblur="saveOverviewDealAmountOnBlur(this)"></div>`
     : '';
+  const objSwitcher = (l.has_multiple_objects && l.objects && l.objects.length) ? `
+    <div class="overview-object-switcher">
+      <div class="rp-sec">Объекты</div>
+      <div class="object-tabs">
+        ${(l.objects || []).map(o => `
+          <div class="object-tab-wrap">
+            <button type="button" class="dbtn object-tab ${(o.id === activeObjectId) ? 'active' : ''}" onclick="selectOverviewObject(${o.id})">${escapeHtml(o.name || 'Объект')}</button>
+            <button type="button" class="object-tab-edit" onclick="event.stopPropagation();renameOverviewObject(${leadId}, ${o.id})" title="Переименовать">✎</button>
+            ${(l.objects || []).length > 1 ? `<button type="button" class="object-tab-del" onclick="event.stopPropagation();deleteOverviewObject(${leadId}, ${o.id})" title="Удалить">×</button>` : ''}
+          </div>
+        `).join('')}
+        <button type="button" class="dbtn object-tab-add" onclick="addOverviewObject(${leadId})">+ Новый</button>
+      </div>
+    </div>
+  ` : '';
   return `
+    ${objSwitcher}
     <div class="ai-card lead-card-block">
-      <div class="ai-label">КАРТОЧКА ЛИДА</div>
+      <div class="ai-label">КАРТОЧКА ОБЪЕКТА</div>
       <div class="ai-grid">
-        <div class="ai-field" id="cardField-${l.id}-status"><div class="aif-label">Статус</div><select class="aif-edit-select" onchange="updateLeadField(${l.id}, 'status', this.value)">${statusOpts}</select></div>
-        <div class="ai-field" id="cardField-${l.id}-budget"><div class="aif-label">Бюджет</div><select class="aif-edit-select" onchange="updateLeadField(${l.id}, 'budget', this.value)">${budgetOpts}</select></div>
-        <div class="ai-field" id="cardField-${l.id}-object_type"><div class="aif-label">Тип объекта</div><select class="aif-edit-select" onchange="updateLeadField(${l.id}, 'object_type', this.value)">${objectOpts}</select></div>
-        <div class="ai-field" id="cardField-${l.id}-address"><div class="aif-label">Адрес</div><input type="text" class="aif-edit-input" value="${escapeHtml(l.address || '')}" placeholder="Адрес" onblur="updateLeadField(${l.id}, 'address', this.value)"></div>
-        <div class="ai-field" id="cardField-${l.id}-extra_phones"><div class="aif-label">Доп. телефоны</div><input type="text" class="aif-edit-input" value="${escapeHtml(l.extra_phones || '')}" placeholder="+7 ... через запятую" onblur="updateLeadField(${l.id}, 'extra_phones', this.value)"></div>
-        <div class="ai-field" id="cardField-${l.id}-max_link"><div class="aif-label">Ссылка МАХ</div><input type="text" class="aif-edit-input" value="${escapeHtml(l.max_link || '')}" placeholder="https://..." onblur="updateLeadField(${l.id}, 'max_link', this.value)"></div>
-        <div class="ai-field" id="cardField-${l.id}-tg_link"><div class="aif-label">Ссылка TG</div><input type="text" class="aif-edit-input" value="${escapeHtml(l.tg_link || '')}" placeholder="https://t.me/ или @username" onblur="updateLeadField(${l.id}, 'tg_link', this.value)"></div>
-        <div class="ai-field"><div class="aif-label">Последний контакт</div><div class="aif-val" id="lastContactDisplay-${l.id}">${l.date||'—'}</div></div>
+        <div class="ai-field" id="cardField-${leadId}-${objectId || 'l'}-budget"><div class="aif-label">Бюджет</div><select class="aif-edit-select" onchange="updateOverviewField(${leadId}, ${objectId || 'null'}, 'budget', this.value)">${budgetOpts}</select></div>
+        <div class="ai-field" id="cardField-${leadId}-${objectId || 'l'}-object_type"><div class="aif-label">Тип объекта</div><select class="aif-edit-select" onchange="updateOverviewField(${leadId}, ${objectId || 'null'}, 'object_type', this.value)">${objectOpts}</select></div>
+        <div class="ai-field" id="cardField-${leadId}-${objectId || 'l'}-address"><div class="aif-label">Адрес</div><input type="text" class="aif-edit-input" value="${escapeHtml(data.address || '')}" placeholder="Адрес" onblur="updateOverviewField(${leadId}, ${objectId || 'null'}, 'address', this.value)"></div>
+        <div class="ai-field"><div class="aif-label">Последний контакт</div><div class="aif-val" id="lastContactDisplay-${leadId}">${l.date||'—'}</div></div>
         ${dealAmountRowWithId}
-        <div class="ai-field ai-field-toggle" id="cardField-${l.id}-communication_done">
+        <div class="ai-field ai-field-toggle" id="cardField-${leadId}-communication_done">
           <div class="aif-label">Завершил общение</div>
-          <label class="toggle-wrap"><input type="checkbox" ${l.communication_done ? 'checked' : ''} onchange="updateLeadField(${l.id}, 'communication_done', this.checked)"><span class="toggle-slider"></span></label>
+          <label class="toggle-wrap"><input type="checkbox" ${data.communication_done ? 'checked' : ''} onchange="updateOverviewField(${leadId}, null, 'communication_done', this.checked)"><span class="toggle-slider"></span></label>
         </div>
       </div>
       ${lastMsg ? `<div class="ai-comment" style="margin-top:8px">📩 <b>Последнее сообщение:</b> ${escapeHtml(lastMsg.text)}</div>` : ''}
     </div>
 
-    <div class="overview-block overview-desc-block" id="cardField-${l.id}-description">
+    <div class="overview-block overview-desc-block" id="cardField-${leadId}-${objectId || 'l'}-description">
       <div class="overview-block-title">ОПИСАНИЕ ПРОЕКТА</div>
-      <textarea class="overview-description-ta" id="descriptionTa-${l.id}" placeholder="Добавьте описание проекта или нажмите Обновить" data-lead-id="${l.id}">${escapeHtml(l.description || '')}</textarea>
-      <button type="button" class="dbtn" id="btnSummarize-${l.id}" style="margin-top:8px;font-size:9px" onclick="requestLeadSummary(${l.id})">↺ Обновить из переписки и заметок</button>
+      <textarea class="overview-description-ta" id="descriptionTa-${leadId}-${objectId || 'l'}" placeholder="Добавьте описание проекта или нажмите Обновить" data-lead-id="${leadId}" data-object-id="${objectId || ''}">${escapeHtml(data.description || '')}</textarea>
+      <button type="button" class="dbtn" id="btnSummarize-${leadId}" style="margin-top:8px;font-size:9px" onclick="requestLeadSummary(${leadId})">↺ Обновить из переписки и заметок</button>
     </div>
 
-    <div class="overview-block" id="cardField-${l.id}-work_types">
-      <div class="overview-block-title">Виды работ</div>
-      <div class="work-types-row">${workTypesHtml}</div>
+    <div class="overview-block work-types-block" id="cardField-${leadId}-${objectId || 'l'}-work_types">
+      <div class="overview-block-title work-types-toggle" onclick="toggleWorkTypesBlock(this)">Виды работ <span class="wt-chevron">▼</span></div>
+      <div class="work-types-row work-types-body collapsed">${workTypesHtml}</div>
     </div>
 
-    <div class="notes-feed">
+    <div class="notes-feed" data-lead-id="${leadId}" data-object-id="${objectId || ''}">
       <div class="notes-feed-title">📝 Заметки</div>
       <div class="notes-feed-add">
-        <input type="text" id="noteInput-${l.id}" class="notes-input" placeholder="Текст заметки..." onkeydown="if(event.key==='Enter')addNote(${l.id})">
-        <button type="button" class="dbtn primary" onclick="addNote(${l.id})">Добавить заметку</button>
+        <input type="text" id="noteInput-${leadId}-${objectId || 'l'}" class="notes-input" placeholder="Текст заметки..." onkeydown="if(event.key==='Enter')addNoteWithObject(${leadId}, ${objectId || 'null'})">
+        <button type="button" class="dbtn primary" onclick="addNoteWithObject(${leadId}, ${objectId || 'null'})">Добавить заметку</button>
       </div>
-      <div id="notesList-${l.id}" class="notes-list">Загрузка...</div>
+      <div id="notesList-${leadId}-${objectId || 'l'}" class="notes-list">Загрузка...</div>
     </div>
 
     <div>
@@ -1108,6 +1246,92 @@ function renderOverview(l) {
       }
     </div>
   `;
+}
+
+function toggleWorkTypesBlock(titleEl) {
+  const block = titleEl && titleEl.closest('.work-types-block');
+  if (!block) return;
+  const body = block.querySelector('.work-types-body');
+  const chevron = block.querySelector('.wt-chevron');
+  if (body) body.classList.toggle('collapsed');
+  if (chevron) chevron.textContent = body && body.classList.contains('collapsed') ? '▶' : '▼';
+}
+
+function selectOverviewObject(objectId) {
+  activeObjectId = objectId;
+  saveState();
+  const l = leads.find(x => x.id === activeId);
+  if (l) { const tb = document.getElementById('tabBody'); if (tb) tb.innerHTML = renderOverview(l); if (activeTab === 'overview') loadNotesIntoFeed(activeId, objectId); }
+}
+
+async function addOverviewObject(leadId) {
+  const l = leads.find(x => x.id === leadId);
+  if (!l || !l.has_multiple_objects) return;
+  const n = (l.objects || []).length + 1;
+  const created = await apiCreateObject(leadId, { name: 'Объект ' + n });
+  if (!created) return;
+  if (!l.objects) l.objects = [];
+  l.objects.push(created);
+  activeObjectId = created.id;
+  saveState();
+  renderDetail();
+  if (activeTab === 'overview') loadNotesIntoFeed(leadId, created.id);
+}
+
+async function renameOverviewObject(leadId, objectId) {
+  const l = leads.find(x => x.id === leadId);
+  const obj = (l && l.objects || []).find(o => o.id === objectId);
+  if (!obj) return;
+  const name = prompt('Название объекта:', obj.name || 'Объект');
+  if (name == null || name.trim() === '') return;
+  const updated = await apiUpdateObject(leadId, objectId, { ...obj, name: name.trim() });
+  if (updated) { obj.name = updated.name; renderDetail(); }
+}
+
+async function deleteOverviewObject(leadId, objectId) {
+  if (!confirm('Удалить этот объект? Заметки объекта останутся без привязки.')) return;
+  const ok = await apiDeleteObject(leadId, objectId);
+  if (!ok) return;
+  const l = leads.find(x => x.id === leadId);
+  if (l && l.objects) {
+    l.objects = l.objects.filter(o => o.id !== objectId);
+    if (activeObjectId === objectId) activeObjectId = (l.objects[0] && l.objects[0].id) || null;
+    saveState();
+    renderDetail();
+    if (activeTab === 'overview') loadNotesIntoFeed(leadId, activeObjectId);
+  }
+}
+
+async function toggleOverviewWorkType(leadId, objectId, workTypeName, checked) {
+  const l = leads.find(x => x.id === leadId);
+  if (!l) return;
+  const data = objectId != null ? (l.objects || []).find(o => o.id === objectId) : l;
+  if (!data) return;
+  let arr = Array.isArray(data.work_types) ? [...data.work_types] : [];
+  if (checked) { if (!arr.includes(workTypeName)) arr.push(workTypeName); }
+  else arr = arr.filter(x => x !== workTypeName);
+  await updateOverviewField(leadId, objectId, 'work_types', arr);
+}
+
+async function saveOverviewDealAmountOnBlur(inputEl) {
+  const leadId = parseInt(inputEl.getAttribute('data-lead-id'), 10);
+  const oid = inputEl.getAttribute('data-object-id');
+  const objectId = oid === '' || oid === 'null' ? null : parseInt(oid, 10);
+  const l = leads.find(x => x.id === leadId);
+  if (!l) return;
+  const digits = (inputEl.value || '').replace(/\D/g, '');
+  const value = digits ? parseInt(digits, 10) : null;
+  await updateOverviewField(leadId, objectId, 'deal_amount', value);
+  updateStats();
+}
+
+function addNoteWithObject(leadId, objectId) {
+  const id = objectId === 'null' || objectId == null ? null : objectId;
+  const input = document.getElementById('noteInput-' + leadId + '-' + (id || 'l'));
+  const text = (input && input.value || '').trim();
+  if (!text) return;
+  addNote(leadId, text, id);
+  if (input) input.value = '';
 }
 
 // MESSAGES

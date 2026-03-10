@@ -1,0 +1,4 @@
+{"sessionId":"8d7168","location":"api.js:apiGenerateReply","message":"request","data":{"url":"http://127.0.0.1:8001/api/leads/175/generate-reply","method":"POST","leadId":175},"hypothesisId":"H1 H2 H4 H5","timestamp":1773140587377}
+{"sessionId":"8d7168","location":"api.js:apiGenerateReply","message":"request","data":{"url":"http://127.0.0.1:8001/api/leads/175/generate-reply","method":"POST","leadId":175},"hypothesisId":"H1 H2 H4 H5","timestamp":1773140657989}
+{"sessionId":"8d7168","location":"api.js:apiGenerateReply","message":"request","data":{"url":"http://127.0.0.1:8001/api/leads/175/generate-reply","method":"POST","leadId":175},"hypothesisId":"H1 H2 H4 H5","timestamp":1773140744489}
+{"sessionId":"8d7168","location":"api.js:apiGenerateReply","message":"request","data":{"url":"http://127.0.0.1:8001/api/leads/175/generate-reply","method":"POST","leadId":175},"hypothesisId":"H1 H2 H4 H5","timestamp":1773141743248}

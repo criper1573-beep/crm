@@ -490,11 +490,22 @@ function getPeriodRange(periodKey) {
   return { startDate, endDate };
 }
 
+function lastContactToYmd(str) {
+  if (!str || typeof str !== 'string') return '';
+  const s = str.trim();
+  const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (iso) return iso[1] + '-' + iso[2].padStart(2, '0') + '-' + iso[3].padStart(2, '0');
+  const dmy = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})/);
+  if (dmy) return dmy[3] + '-' + dmy[2].padStart(2, '0') + '-' + dmy[1].padStart(2, '0');
+  return '';
+}
+
 function getLeadsForPeriod() {
   const { startDate, endDate } = getPeriodRange(currentPeriod);
   return leads.filter(l => {
-    const created = (l.created_at || '').slice(0, 10);
-    return created >= startDate && created <= endDate;
+    const dateYmd = lastContactToYmd(l.last_contact || l.date || '') || (l.created_at || '').slice(0, 10);
+    if (!dateYmd) return false;
+    return dateYmd >= startDate && dateYmd <= endDate;
   });
 }
 
@@ -873,16 +884,28 @@ function switchTab(tab) {
 }
 
 async function loadLastContactFromMessages(leadId) {
-  const el = document.getElementById('lastContactDisplay-' + leadId);
-  if (!el) return;
+  const wrap = document.getElementById('cardField-' + leadId + '-last_contact');
+  const input = wrap && wrap.querySelector('input.aif-edit-input');
+  if (!input) return;
   const messages = await apiGetMessages(leadId);
   if (messages && messages.length > 0) {
     const maxDate = messages.reduce((max, m) => {
       const d = m.created_at || '';
       return d > max ? d : max;
     }, '');
-    if (maxDate) el.textContent = formatNoteDate(maxDate);
+    if (maxDate && !input.value.trim()) input.value = formatNoteDate(maxDate);
   }
+}
+
+async function saveLastContactOnBlur(inputEl, leadId) {
+  const l = leads.find(x => x.id === leadId);
+  if (!l) return;
+  const value = (inputEl && inputEl.value || '').trim();
+  await updateOverviewField(leadId, null, 'last_contact', value);
+  showSaveIndicator('cardField-' + leadId + '-last_contact');
+  const row = document.getElementById('lc-' + leadId);
+  if (row) { const dateEl = row.querySelector('.lc-date'); if (dateEl) dateEl.textContent = value || '—'; }
+  updateStats();
 }
 
 function initDescriptionBlur(leadId, objectId = null) {
@@ -1151,7 +1174,12 @@ async function updateOverviewField(leadId, objectId, field, value) {
   } else {
     const payload = getLeadPayloadForUpdate(l, { [field]: value });
     const updated = await apiUpdateLead(leadId, payload);
-    if (updated) { l[field] = value; showSaveIndicator('cardField-' + leadId + '-' + suffix + '-' + field); updateStats(); }
+    if (updated) {
+      l[field] = value;
+      if (field === 'last_contact') l.date = value;
+      showSaveIndicator('cardField-' + leadId + '-' + suffix + '-' + field);
+      updateStats();
+    }
   }
 }
 
@@ -1199,7 +1227,7 @@ function renderOverview(l) {
         <div class="ai-field" id="cardField-${leadId}-${objectId || 'l'}-budget"><div class="aif-label">Бюджет</div><select class="aif-edit-select" onchange="updateOverviewField(${leadId}, ${objectId || 'null'}, 'budget', this.value)">${budgetOpts}</select></div>
         <div class="ai-field" id="cardField-${leadId}-${objectId || 'l'}-object_type"><div class="aif-label">Тип объекта</div><select class="aif-edit-select" onchange="updateOverviewField(${leadId}, ${objectId || 'null'}, 'object_type', this.value)">${objectOpts}</select></div>
         <div class="ai-field" id="cardField-${leadId}-${objectId || 'l'}-address"><div class="aif-label">Адрес</div><input type="text" class="aif-edit-input" value="${escapeHtml(data.address || '')}" placeholder="Адрес" onblur="updateOverviewField(${leadId}, ${objectId || 'null'}, 'address', this.value)"></div>
-        <div class="ai-field"><div class="aif-label">Последний контакт</div><div class="aif-val" id="lastContactDisplay-${leadId}">${l.date||'—'}</div></div>
+        <div class="ai-field" id="cardField-${leadId}-last_contact"><div class="aif-label">Последний контакт</div><input type="text" class="aif-edit-input" value="${escapeHtml(l.last_contact || l.date || '')}" placeholder="ГГГГ-ММ-ДД или ДД.ММ.ГГГГ" onblur="saveLastContactOnBlur(this, ${leadId})" title="Меняйте дату, чтобы убрать лид из выбранного периода аналитики"></div>
         ${dealAmountRowWithId}
         <div class="ai-field ai-field-toggle" id="cardField-${leadId}-communication_done">
           <div class="aif-label">Завершил общение</div>

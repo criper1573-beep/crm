@@ -1,5 +1,6 @@
 # FastAPI app
 
+import logging
 from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
@@ -23,28 +24,60 @@ app.add_middleware(
 )
 
 # Путь к папке frontend (от корня проекта)
-FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+FRONTEND_DIR = PROJECT_ROOT / "frontend"
+LOG_FILE = PROJECT_ROOT / "crm.log"
+
+
+class _FlushingFileHandler(logging.FileHandler):
+    """Пишет в файл и сразу сбрасывает буфер — логи видны без перезапуска."""
+
+    def emit(self, record):
+        super().emit(record)
+        self.flush()
 
 
 def _normalize_summary_text(text: str) -> str:
-    """Убирает переносы внутри строк (от API), оставляет только абзацы."""
+    """Убирает переносы внутри строк (артефакты GRS AI), оставляет только настоящие абзацы.
+
+    Настоящий разрыв абзаца = \n\n, где перед ним идёт завершение предложения (. ! ?).
+    Все остальные переносы (включая \n\n посреди предложения) заменяются пробелом.
+    """
     if not text or not text.strip():
         return text
     import re
-    # Сохраняем разбиение на абзацы (двойной перенос)
-    placeholder = "\x00\x00"
     t = text.replace("\r\n", "\n").replace("\r", "\n")
-    t = re.sub(r"\n{2,}", placeholder, t)
-    # Одиночные \n -> пробел
-    t = t.replace("\n", " ")
-    t = t.replace(placeholder, "\n\n")
-    # Убрать лишние пробелы и переносы по краям
-    t = re.sub(r" +", " ", t).strip()
-    return t
+    # Все \n (любое количество) → пробел; потом восстановим настоящие абзацы
+    # Шаг 1: Пометить настоящие разрывы абзацев: \n\n после [.!?] (с возможными пробелами)
+    REAL_PARA = "\x00\x00"
+    t = re.sub(r'([.!?])\s*\n{2,}', r'\1' + REAL_PARA, t)
+    # Шаг 2: Все оставшиеся переносы (в т.ч. \n\n посреди предложений) → пробел
+    t = re.sub(r'\n+', ' ', t)
+    # Шаг 3: Восстановить настоящие абзацы
+    t = t.replace(REAL_PARA, "\n\n")
+    # Убрать лишние пробелы
+    t = re.sub(r' {2,}', ' ', t)
+    t = re.sub(r'\n\n +', '\n\n', t)
+    return t.strip()
 
 
 @app.on_event("startup")
 def startup():
+    # Логи в файл в корне проекта, сброс после каждой записи
+    formatter = logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+    )
+    file_handler = _FlushingFileHandler(LOG_FILE, encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(formatter)
+
+    # Один handler на backend — все backend.* (grs_ai, main) пишут сюда
+    backend_log = logging.getLogger("backend")
+    backend_log.addHandler(file_handler)
+    backend_log.setLevel(logging.INFO)
+
+    logging.getLogger("backend.main").info("CRM started, logs: %s", LOG_FILE)
+
     database.init_db()
 
 
@@ -187,12 +220,33 @@ def _run_summarize(lead_id: int) -> None:
             parts.append(f"{label}{n.get('text', '')}")
 
         user_content = "\n\n".join(parts) if parts else "Нет переписки и заметок."
+
+        # Если контент слишком большой — обрезаем до 12 000 символов (~ 3 000 токенов)
+        MAX_CHARS = 12_000
+        if len(user_content) > MAX_CHARS:
+            user_content = user_content[-MAX_CHARS:]  # берём последние (самые свежие)
+
         messages_api = [
             {"role": "system", "content": system_content},
             {"role": "user", "content": user_content},
         ]
 
-        summary = grs_ai.chat_completion(messages_api, max_tokens=800)
+        # Авторетрай до 3 раз с паузой 5 сек при пустом ответе от GRS AI
+        import time as _time_retry
+        summary = None
+        last_err = None
+        for _attempt in range(3):
+            try:
+                summary = grs_ai.chat_completion(messages_api, max_tokens=800)
+                break
+            except RuntimeError as _re:
+                last_err = _re
+                logging.getLogger("backend.main").warning(
+                    "Summarize lead %s attempt %d failed: %s", lead_id, _attempt + 1, _re)
+                if _attempt < 2:
+                    _time_retry.sleep(5)
+        if summary is None:
+            raise last_err
         summary = _normalize_summary_text(summary or "")
 
         lead_dict = database.get_lead_by_id(lead_id)
@@ -201,8 +255,6 @@ def _run_summarize(lead_id: int) -> None:
             lead_obj = Lead(**{k: v for k, v in lead_dict.items() if k in Lead.model_fields})
             database.update_lead(lead_id, lead_obj)
     except Exception as e:
-        # Логируем; ответ клиенту уже отправлен (202)
-        import logging
         logging.getLogger("backend.main").exception("Summarize lead %s: %s", lead_id, e)
 
 

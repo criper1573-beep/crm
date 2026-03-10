@@ -1,0 +1,19 @@
+[Unit]
+Description=CRM GitHub Webhook Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/crm
+EnvironmentFile=/root/crm/.env
+Environment=WEBHOOK_PORT=3001
+ExecStart=/root/crm/venv/bin/python /root/crm/webhook_server.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=crm-webhook
+
+[Install]
+WantedBy=multi-user.target

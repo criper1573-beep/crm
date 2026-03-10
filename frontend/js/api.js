@@ -188,12 +188,8 @@ if (typeof window !== 'undefined') window.apiSummarizeLead = apiSummarizeLead;
 
 async function apiGenerateReply(leadId) {
   const base = (BASE || '').replace(/\/$/, '');
-  const url = (base.endsWith('/api') ? base : base + '/api') + '/leads/' + leadId + '/generate-reply';
-  const method = 'POST';
-  // #region agent log
-  fetch('http://127.0.0.1:7512/ingest/9610a248-e980-437d-9f27-76e38d464884',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'8d7168'},body:JSON.stringify({sessionId:'8d7168',location:'api.js:apiGenerateReply',message:'request',data:{url,method,leadId:leadId},hypothesisId:'H1 H2 H4 H5',timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
-  const res = await fetch(url, { method });
+  const url = (base ? base : '/api') + '/leads/' + leadId + '/generate-reply';
+  const res = await fetch(url, { method: 'POST' });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     const msg = body.detail || res.statusText;

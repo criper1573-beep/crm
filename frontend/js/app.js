@@ -92,6 +92,7 @@ function getLeadPayloadForUpdate(l, overrides = {}) {
     work_types: Array.isArray(l.work_types) ? l.work_types : (l.work_types ? JSON.parse(l.work_types || '[]') : []),
     description: l.description ?? '',
     deal_amount: l.deal_amount != null ? (typeof l.deal_amount === 'number' ? l.deal_amount : parseInt(l.deal_amount, 10) || null) : null,
+    communication_done: !!l.communication_done,
     ...overrides,
   };
 }
@@ -425,10 +426,34 @@ async function deleteLead(id) {
 }
 
 // ─── STATE ─────────────────────────────────────────────────
+const CRM_STORAGE_KEY = 'crm_state';
 let activeId = null;
 let activeTab = 'overview';
 let currentFilter = 'all';
 let currentPeriod = 'month';
+
+function saveState() {
+  try {
+    sessionStorage.setItem(CRM_STORAGE_KEY, JSON.stringify({
+      activeId,
+      activeTab,
+      currentFilter,
+      currentPeriod,
+    }));
+  } catch (e) {}
+}
+
+function loadState() {
+  try {
+    const raw = sessionStorage.getItem(CRM_STORAGE_KEY);
+    if (!raw) return;
+    const s = JSON.parse(raw);
+    if (s.currentPeriod) currentPeriod = s.currentPeriod;
+    if (s.currentFilter) currentFilter = s.currentFilter;
+    if (s.activeId != null) activeId = s.activeId;
+    if (s.activeTab) activeTab = s.activeTab;
+  } catch (e) {}
+}
 
 function getPeriodRange(periodKey) {
   const today = new Date();
@@ -462,6 +487,7 @@ function setPeriod(periodKey) {
   document.querySelectorAll('.period-btn').forEach(btn => {
     btn.classList.toggle('active', btn.getAttribute('data-period') === periodKey);
   });
+  saveState();
   updateStats();
 }
 
@@ -505,10 +531,10 @@ function updateStats() {
   const revenueEl = document.getElementById('revenueTotal');
   if (revenueEl) revenueEl.textContent = formatDealAmount(revenue) || '0 ₽';
 
-  // funnel in sidebar: "Все" first, then statuses; click filters list; active row highlighted
+  // funnel in sidebar: counts by selected period (same as analytics)
   const sfl = document.getElementById('sidebarFunnelList');
   if (sfl) {
-    const total = leads.length;
+    const total = leadsForPeriod.length;
     const pctAll = total ? 100 : 0;
     const activeAll = currentFilter === 'all';
     let html = `<div class="funnel-item ${activeAll ? 'active' : ''}" onclick="setFilter('all')">
@@ -521,7 +547,7 @@ function updateStats() {
       funnelOrder.filter(k => k !== 'all').forEach(key => {
         const cfg = CONFIG.statuses[key];
         if (!cfg) return;
-        const cnt = leads.filter(l => l.status === key).length;
+        const cnt = leadsForPeriod.filter(l => l.status === key).length;
         const pct = total ? Math.round(cnt / total * 100) : 0;
         const color = (cfg && cfg.color) || 'var(--text2)';
         const isActive = currentFilter === key;
@@ -581,6 +607,7 @@ function updateStats() {
     return Math.floor((Date.now() - d.getTime()) / (24 * 60 * 60 * 1000));
   }
   const alertLeads = leads.filter(l => {
+    if (l.communication_done) return false;
     const lastDir = (l.last_message_direction || '').toLowerCase();
     const lastDate = l.last_message_date || '';
     const hasMessages = !!lastDir;
@@ -615,7 +642,8 @@ function updateStats() {
 // ─── RENDER LIST ───────────────────────────────────────────
 function renderList() {
   const q = document.getElementById('searchInput').value.toLowerCase();
-  const filtered = leads.filter(l => {
+  const leadsInPeriod = getLeadsForPeriod();
+  const filtered = leadsInPeriod.filter(l => {
     const matchFilter = currentFilter === 'all' ||
       (CONFIG.statuses && currentFilter in CONFIG.statuses ? l.status === currentFilter : getStatusGroup(l.status) === currentFilter);
     const matchSearch = !q || (l.name || '').toLowerCase().includes(q) || (l.address || '').toLowerCase().includes(q) || (l.comment || '').toLowerCase().includes(q);
@@ -644,6 +672,7 @@ function renderList() {
 
 function setFilter(f) {
   currentFilter = f;
+  saveState();
   renderList();
   updateStats();
 }
@@ -654,6 +683,7 @@ function filterLeads() { renderList(); }
 function openLead(id) {
   activeId = id;
   activeTab = 'overview';
+  saveState();
   renderList();
   renderDetail();
 }
@@ -706,6 +736,7 @@ function renderDetail() {
 
 function switchTab(tab) {
   activeTab = tab;
+  saveState();
   const l = leads.find(x => x.id === activeId);
   document.querySelectorAll('.dtab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.dtab').forEach(t => {
@@ -898,6 +929,7 @@ async function updateLeadField(leadId, field, value) {
     l[field] = value;
     if (field === 'object_type') l.obj = value;
     if (field === 'status') updateStatusInUI(leadId, value);
+    if (field === 'communication_done') { updateStats(); showSaveIndicator('cardField-' + leadId + '-communication_done'); }
     else showSaveIndicator('cardField-' + leadId + '-' + field);
   }
 }
@@ -994,6 +1026,10 @@ function renderOverview(l) {
         <div class="ai-field" id="cardField-${l.id}-address"><div class="aif-label">Адрес</div><input type="text" class="aif-edit-input" value="${escapeHtml(l.address || '')}" placeholder="Адрес" onblur="updateLeadField(${l.id}, 'address', this.value)"></div>
         <div class="ai-field"><div class="aif-label">Последний контакт</div><div class="aif-val" id="lastContactDisplay-${l.id}">${l.date||'—'}</div></div>
         ${dealAmountRowWithId}
+        <div class="ai-field ai-field-toggle" id="cardField-${l.id}-communication_done">
+          <div class="aif-label">Завершил общение</div>
+          <label class="toggle-wrap"><input type="checkbox" ${l.communication_done ? 'checked' : ''} onchange="updateLeadField(${l.id}, 'communication_done', this.checked)"><span class="toggle-slider"></span></label>
+        </div>
       </div>
       ${lastMsg ? `<div class="ai-comment" style="margin-top:8px">📩 <b>Последнее сообщение:</b> ${escapeHtml(lastMsg.text)}</div>` : ''}
     </div>
@@ -1051,11 +1087,6 @@ function renderMsgs(l) {
   return `
     <div id="messagesList-${leadId}" class="msg-thread messages-feed">Загрузка...</div>
     <div class="msg-form-tabs">
-      <div class="msg-form-tab-row">
-        <button type="button" class="msg-form-tab active" data-msg-tab="write">Написать</button>
-        <button type="button" class="msg-form-tab" data-msg-tab="paste">Вставить текст</button>
-        <button type="button" class="msg-form-tab" data-msg-tab="telegram">Загрузить Телеграм</button>
-      </div>
       <div class="msg-form-panel active" data-msg-panel="write">
         <div class="msg-form-row">
           <textarea id="msgText-${leadId}" class="msg-form-text" placeholder="Текст сообщения..." rows="2"></textarea>
@@ -1089,15 +1120,20 @@ function renderMsgs(l) {
           <button type="button" class="dbtn primary" onclick="doImportTelegramFromPreview(${leadId})">Импортировать</button>
         </div>
       </div>
+      <div class="msg-form-tab-icons">
+        <button type="button" class="msg-form-tab-icon active" data-msg-tab="write" title="Написать">✏️</button>
+        <button type="button" class="msg-form-tab-icon" data-msg-tab="paste" title="Вставить текст">📋</button>
+        <button type="button" class="msg-form-tab-icon" data-msg-tab="telegram" title="Загрузить Телеграм">📁</button>
+      </div>
     </div>
   `;
 }
 
 function initMsgFormTabs() {
-  document.querySelectorAll('.msg-form-tab').forEach(tab => {
+  document.querySelectorAll('.msg-form-tab-icon').forEach(tab => {
     tab.addEventListener('click', () => {
       const name = tab.dataset.msgTab;
-      document.querySelectorAll('.msg-form-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.msg-form-tab-icon').forEach(t => t.classList.remove('active'));
       document.querySelectorAll('.msg-form-panel').forEach(p => p.classList.remove('active'));
       tab.classList.add('active');
       const panel = document.querySelector('.msg-form-panel[data-msg-panel="' + name + '"]');
@@ -1182,6 +1218,13 @@ async function sendMessageAs(leadId, direction) {
   const created = await apiCreateMessage(leadId, { text, direction, source });
   if (!created) return;
   input.value = '';
+  if ((direction || '').toLowerCase() === 'in') {
+    const l = leads.find(x => x.id === leadId);
+    if (l) l.communication_done = false;
+    updateStats();
+    const cb = document.querySelector('#cardField-' + leadId + '-communication_done input[type=checkbox]');
+    if (cb) cb.checked = false;
+  }
   await loadMessagesIntoFeed(leadId);
   const listEl = document.getElementById('messagesList-' + leadId);
   if (listEl) listEl.scrollTop = listEl.scrollHeight;
@@ -1259,6 +1302,7 @@ async function importAvitoText(leadId) {
   const withSource = messages.map(m => ({ ...m, source }));
   const list = await apiCreateMessagesBulk(leadId, withSource);
   if (!list) return;
+  await refreshLeadAfterBulkMessages(leadId);
   textarea.value = '';
   await loadMessagesIntoFeed(leadId);
   const listEl = document.getElementById('messagesList-' + leadId);
@@ -1370,11 +1414,23 @@ async function handleTelegramFile(leadId, file) {
   }
 }
 
+async function refreshLeadAfterBulkMessages(leadId) {
+  const updated = await apiGetLead(leadId);
+  if (updated) {
+    const l = leads.find(x => x.id === leadId);
+    if (l) Object.assign(l, updated);
+    updateStats();
+    const cb = document.querySelector('#cardField-' + leadId + '-communication_done input[type=checkbox]');
+    if (cb) cb.checked = !!updated.communication_done;
+  }
+}
+
 async function doImportTelegramFromPreview(leadId) {
   const messages = lastTelegramMessagesByLead[leadId];
   if (!messages || !messages.length) return;
   const list = await apiCreateMessagesBulk(leadId, messages);
   if (!list) return;
+  await refreshLeadAfterBulkMessages(leadId);
   lastTelegramMessagesByLead[leadId] = [];
   const previewWrap = document.getElementById('msgTelegramPreview-' + leadId);
   if (previewWrap) previewWrap.style.display = 'none';
@@ -1456,11 +1512,16 @@ async function init() {
     const btn = e.target.closest('#periodSwitcher .period-btn');
     if (btn) setPeriod(btn.getAttribute('data-period'));
   });
+  loadState();
   const raw = await apiGetLeads();
   leads = (raw || []).map(mapLeadFromApi);
-  updateStats();
-  renderList();
-  if (leads.length) setTimeout(() => openLead(leads[0].id), 200);
+  setPeriod(currentPeriod);
+  setFilter(currentFilter);
+  if (activeId != null && leads.some(l => l.id === activeId)) {
+    renderDetail();
+  } else if (leads.length) {
+    openLead(leads[0].id);
+  }
 }
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', init);

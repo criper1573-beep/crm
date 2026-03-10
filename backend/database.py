@@ -47,6 +47,8 @@ def init_db() -> None:
             conn.execute("ALTER TABLE leads ADD COLUMN description TEXT NOT NULL DEFAULT ''")
         if "deal_amount" not in cols:
             conn.execute("ALTER TABLE leads ADD COLUMN deal_amount INTEGER")
+        if "communication_done" not in cols:
+            conn.execute("ALTER TABLE leads ADD COLUMN communication_done INTEGER NOT NULL DEFAULT 0")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS notes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -87,6 +89,10 @@ def _lead_row_to_dict(row: sqlite3.Row) -> dict:
             d["deal_amount"] = int(d["deal_amount"])
         except (TypeError, ValueError):
             d["deal_amount"] = None
+    if "communication_done" not in d:
+        d["communication_done"] = False
+    elif d["communication_done"] is not None:
+        d["communication_done"] = bool(int(d["communication_done"]))
     return d
 
 
@@ -108,7 +114,7 @@ def _get_last_message_per_lead() -> dict[int, dict]:
 def get_all_leads() -> list[dict]:
     with get_connection() as conn:
         cur = conn.execute(
-            "SELECT id, name, phone, avito_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, created_at FROM leads ORDER BY id"
+            "SELECT id, name, phone, avito_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, communication_done, created_at FROM leads ORDER BY id"
         )
         leads_list = [_lead_row_to_dict(r) for r in cur.fetchall()]
     last_msgs = _get_last_message_per_lead()
@@ -122,7 +128,7 @@ def get_all_leads() -> list[dict]:
 def get_lead_by_id(lead_id: int) -> dict | None:
     with get_connection() as conn:
         cur = conn.execute(
-            "SELECT id, name, phone, avito_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, created_at FROM leads WHERE id = ?",
+            "SELECT id, name, phone, avito_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, communication_done, created_at FROM leads WHERE id = ?",
             (lead_id,),
         )
         row = cur.fetchone()
@@ -132,11 +138,12 @@ def get_lead_by_id(lead_id: int) -> dict | None:
 def create_lead(lead: Lead) -> int:
     work_types_json = json.dumps(getattr(lead, "work_types", []) or [])
     description = getattr(lead, "description", "") or ""
+    comm_done = 1 if getattr(lead, "communication_done", False) else 0
     with get_connection() as conn:
         deal_amount = getattr(lead, "deal_amount", None)
         cur = conn.execute(
-            """INSERT INTO leads (name, phone, avito_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO leads (name, phone, avito_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, communication_done)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 lead.name,
                 lead.phone,
@@ -150,6 +157,7 @@ def create_lead(lead: Lead) -> int:
                 work_types_json,
                 description,
                 deal_amount,
+                comm_done,
             ),
         )
         conn.commit()
@@ -160,11 +168,12 @@ def update_lead(lead_id: int, lead: Lead) -> bool:
     work_types_json = json.dumps(getattr(lead, "work_types", []) or [])
     description = getattr(lead, "description", "") or ""
     deal_amount = getattr(lead, "deal_amount", None)
+    comm_done = 1 if getattr(lead, "communication_done", False) else 0
     with get_connection() as conn:
         cur = conn.execute(
             """UPDATE leads SET
                 name = ?, phone = ?, avito_link = ?, address = ?, object_type = ?, budget = ?, status = ?,
-                last_contact = ?, comment = ?, work_types = ?, description = ?, deal_amount = ?
+                last_contact = ?, comment = ?, work_types = ?, description = ?, deal_amount = ?, communication_done = ?
                WHERE id = ?""",
             (
                 lead.name,
@@ -179,6 +188,7 @@ def update_lead(lead_id: int, lead: Lead) -> bool:
                 work_types_json,
                 description,
                 deal_amount,
+                comm_done,
                 lead_id,
             ),
         )
@@ -238,6 +248,12 @@ def get_messages_by_lead_id(lead_id: int) -> list[dict]:
         return [_row_to_dict(r) for r in cur.fetchall()]
 
 
+def set_lead_communication_done(lead_id: int, value: bool) -> None:
+    with get_connection() as conn:
+        conn.execute("UPDATE leads SET communication_done = ? WHERE id = ?", (1 if value else 0, lead_id))
+        conn.commit()
+
+
 def create_message(lead_id: int, msg: MessageCreate) -> int:
     with get_connection() as conn:
         cur = conn.execute(
@@ -245,11 +261,14 @@ def create_message(lead_id: int, msg: MessageCreate) -> int:
             (lead_id, msg.text, msg.direction, msg.source),
         )
         conn.commit()
+        if (msg.direction or "").strip().lower() == "in":
+            set_lead_communication_done(lead_id, False)
         return cur.lastrowid
 
 
 def create_messages_bulk(lead_id: int, items: list[MessageBulkItem]) -> list[int]:
     ids = []
+    has_in = any((item.direction or "").strip().lower() == "in" for item in items)
     with get_connection() as conn:
         for item in items:
             created_at = item.created_at if item.created_at else None
@@ -265,6 +284,8 @@ def create_messages_bulk(lead_id: int, items: list[MessageBulkItem]) -> list[int
                 )
             ids.append(cur.lastrowid)
         conn.commit()
+    if has_in:
+        set_lead_communication_done(lead_id, False)
     return ids
 
 

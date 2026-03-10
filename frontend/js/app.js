@@ -548,13 +548,11 @@ function getStatusInfo(s) {
 // ─── STATS ─────────────────────────────────────────────────
 function updateStats() {
   const leadsForPeriod = getLeadsForPeriod();
-  const groups = {hot:0,client:0,repeat:0,drain:0,sql:0};
-  leads.forEach(l => { const g = getStatusGroup(l.status); if(groups[g]!==undefined) groups[g]++; });
-  document.getElementById('cntHot').textContent = groups.hot;
-  document.getElementById('cntClient').textContent = groups.client;
-  document.getElementById('cntAll').textContent = leads.length;
   const periodGroups = {hot:0,client:0,repeat:0,drain:0,sql:0};
   leadsForPeriod.forEach(l => { const g = getStatusGroup(l.status); if(periodGroups[g]!==undefined) periodGroups[g]++; });
+  document.getElementById('cntHot').textContent = periodGroups.hot;
+  document.getElementById('cntClient').textContent = periodGroups.client;
+  document.getElementById('cntAll').textContent = leadsForPeriod.length;
   document.getElementById('s1').textContent = periodGroups.hot;
   document.getElementById('s2').textContent = periodGroups.client;
   document.getElementById('s3').textContent = periodGroups.repeat + periodGroups.sql;

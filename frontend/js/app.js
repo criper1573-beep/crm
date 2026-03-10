@@ -679,11 +679,27 @@ function setFilter(f) {
 
 function filterLeads() { renderList(); }
 
+// ─── MOBILE PANELS ──────────────────────────────────────────
+function toggleMobilePanel(which) {
+  const body = document.body;
+  if (which === 'sidebar') {
+    body.classList.toggle('mobile-sidebar-open');
+    body.classList.remove('mobile-rpanel-open');
+  } else if (which === 'rpanel') {
+    body.classList.toggle('mobile-rpanel-open');
+    body.classList.remove('mobile-sidebar-open');
+  }
+}
+function closeMobilePanels() {
+  document.body.classList.remove('mobile-sidebar-open', 'mobile-rpanel-open');
+}
+
 // ─── OPEN LEAD ─────────────────────────────────────────────
 function openLead(id) {
   activeId = id;
   activeTab = 'overview';
   saveState();
+  closeMobilePanels();
   renderList();
   renderDetail();
 }

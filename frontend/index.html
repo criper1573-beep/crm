@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>МОНТАЖ·CRM</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@300;400;600;700&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
@@ -16,9 +16,11 @@
 <!-- HEADER -->
 <header>
   <div class="logo">МОНТАЖ<span>·</span>CRM</div>
+  <button type="button" class="header-btn-mobile header-btn-mobile-left" id="btnMobileSidebar" onclick="toggleMobilePanel('sidebar')" aria-label="Лиды">≡ Лиды</button>
+  <button type="button" class="header-btn-mobile header-btn-mobile-right" id="btnMobileRpanel" onclick="toggleMobilePanel('rpanel')" aria-label="Аналитика">▣ Аналитика</button>
   <button type="button" class="header-btn-new" id="btnNewLead" onclick="toggleNewLeadForm()">＋ Новый лид</button>
   <button type="button" class="header-btn-new header-btn-import" id="btnImportCsv" onclick="toggleCsvImportModal()">Импорт CSV</button>
-  <div class="hstat"><div class="dot dot-live"></div>Авито синхронизирован</div>
+  <div class="hstat header-hstat-avito"><div class="dot dot-live"></div>Авито синхронизирован</div>
   <div class="header-stats">
     <div class="hstat"><div class="dot dot-hot"></div>Горячих: <b id="cntHot">0</b></div>
     <div class="hstat"><div class="dot dot-ok"></div>Клиентов: <b id="cntClient">0</b></div>
@@ -125,6 +127,8 @@
     </div>
   </div>
 </div>
+
+<div class="mobile-overlay" id="mobileOverlay" onclick="closeMobilePanels()" aria-hidden="true"></div>
 
 <!-- CSV Import Modal -->
 <div class="csv-import-overlay" id="csvImportOverlay" style="display:none">

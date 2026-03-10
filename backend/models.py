@@ -39,6 +39,7 @@ class LeadObject(BaseModel):
     work_types: list[str] = Field(default_factory=list, description="Виды работ — JSON-массив строк")
     description: str = Field(default="", description="Описание проекта")
     deal_amount: int | None = Field(default=None, description="Сумма сделки в рублях")
+    last_contact: str = Field(default="", description="Дата последнего контакта по объекту")
     sort_order: int = Field(default=0, description="Порядок отображения")
 
 
@@ -50,6 +51,7 @@ class LeadObjectCreate(BaseModel):
     work_types: list[str] = Field(default_factory=list, description="Виды работ")
     description: str = Field(default="", description="Описание проекта")
     deal_amount: int | None = Field(default=None, description="Сумма сделки в рублях")
+    last_contact: str = Field(default="", description="Дата последнего контакта по объекту")
     sort_order: int = Field(default=0, description="Порядок отображения")
 
 

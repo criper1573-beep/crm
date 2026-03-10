@@ -500,10 +500,18 @@ function lastContactToYmd(str) {
   return '';
 }
 
+function getEffectiveLastContactYmd(lead) {
+  if (lead.has_multiple_objects && lead.objects && lead.objects.length) {
+    const dates = (lead.objects || []).map(o => lastContactToYmd(o.last_contact || '')).filter(Boolean);
+    if (dates.length) return dates.reduce((a, b) => (a > b ? a : b));
+  }
+  return lastContactToYmd(lead.last_contact || lead.date || '') || (lead.created_at || '').slice(0, 10);
+}
+
 function getLeadsForPeriod() {
   const { startDate, endDate } = getPeriodRange(currentPeriod);
   return leads.filter(l => {
-    const dateYmd = lastContactToYmd(l.last_contact || l.date || '') || (l.created_at || '').slice(0, 10);
+    const dateYmd = getEffectiveLastContactYmd(l);
     if (!dateYmd) return false;
     return dateYmd >= startDate && dateYmd <= endDate;
   });
@@ -690,7 +698,7 @@ function renderList() {
       ${hasNewMsg ? '<div style="position:absolute;top:12px;right:12px;width:7px;height:7px;border-radius:50%;background:var(--hot);animation:pulse 1.5s infinite"></div>' : ''}
       <div class="lc-row">
         <div class="lc-name">${l.name}</div>
-        <div class="lc-date">${l.date}</div>
+        <div class="lc-date">${formatCreatedDate(getEffectiveLastContactYmd(l)) || l.date || '—'}</div>
       </div>
       <div class="lc-meta">
         <span class="sbadge ${si.cls}">${si.label}</span>
@@ -883,8 +891,9 @@ function switchTab(tab) {
   if (tab === 'msgs') setTimeout(() => loadMessagesIntoFeed(activeId), 0);
 }
 
-async function loadLastContactFromMessages(leadId) {
-  const wrap = document.getElementById('cardField-' + leadId + '-last_contact');
+async function loadLastContactFromMessages(leadId, objectId = null) {
+  const suffix = objectId != null ? objectId : 'l';
+  const wrap = document.getElementById('cardField-' + leadId + '-' + suffix + '-last_contact');
   const input = wrap && wrap.querySelector('input.aif-edit-input');
   if (!input) return;
   const messages = await apiGetMessages(leadId);
@@ -897,14 +906,18 @@ async function loadLastContactFromMessages(leadId) {
   }
 }
 
-async function saveLastContactOnBlur(inputEl, leadId) {
+async function saveLastContactOnBlur(inputEl) {
+  if (!inputEl) return;
+  const leadId = parseInt(inputEl.getAttribute('data-lead-id'), 10);
+  const oid = inputEl.getAttribute('data-object-id');
+  const objectId = (oid === '' || oid === 'null' || !oid) ? null : parseInt(oid, 10);
   const l = leads.find(x => x.id === leadId);
   if (!l) return;
-  const value = (inputEl && inputEl.value || '').trim();
-  await updateOverviewField(leadId, null, 'last_contact', value);
-  showSaveIndicator('cardField-' + leadId + '-last_contact');
-  const row = document.getElementById('lc-' + leadId);
-  if (row) { const dateEl = row.querySelector('.lc-date'); if (dateEl) dateEl.textContent = value || '—'; }
+  const value = (inputEl.value || '').trim();
+  await updateOverviewField(leadId, objectId, 'last_contact', value);
+  const suffix = objectId != null ? objectId : 'l';
+  showSaveIndicator('cardField-' + leadId + '-' + suffix + '-last_contact');
+  renderList();
   updateStats();
 }
 
@@ -1086,7 +1099,7 @@ async function updateLeadField(leadId, field, value) {
 }
 
 async function loadNotesIntoFeed(leadId, objectId = null) {
-  loadLastContactFromMessages(leadId);
+  loadLastContactFromMessages(leadId, objectId);
   const suffix = objectId != null ? objectId : 'l';
   initDescriptionBlur(leadId, objectId);
   const el = document.getElementById('notesList-' + leadId + '-' + suffix);
@@ -1227,7 +1240,7 @@ function renderOverview(l) {
         <div class="ai-field" id="cardField-${leadId}-${objectId || 'l'}-budget"><div class="aif-label">Бюджет</div><select class="aif-edit-select" onchange="updateOverviewField(${leadId}, ${objectId || 'null'}, 'budget', this.value)">${budgetOpts}</select></div>
         <div class="ai-field" id="cardField-${leadId}-${objectId || 'l'}-object_type"><div class="aif-label">Тип объекта</div><select class="aif-edit-select" onchange="updateOverviewField(${leadId}, ${objectId || 'null'}, 'object_type', this.value)">${objectOpts}</select></div>
         <div class="ai-field" id="cardField-${leadId}-${objectId || 'l'}-address"><div class="aif-label">Адрес</div><input type="text" class="aif-edit-input" value="${escapeHtml(data.address || '')}" placeholder="Адрес" onblur="updateOverviewField(${leadId}, ${objectId || 'null'}, 'address', this.value)"></div>
-        <div class="ai-field" id="cardField-${leadId}-last_contact"><div class="aif-label">Последний контакт</div><input type="text" class="aif-edit-input" value="${escapeHtml(l.last_contact || l.date || '')}" placeholder="ГГГГ-ММ-ДД или ДД.ММ.ГГГГ" onblur="saveLastContactOnBlur(this, ${leadId})" title="Меняйте дату, чтобы убрать лид из выбранного периода аналитики"></div>
+        <div class="ai-field" id="cardField-${leadId}-${objectId != null ? objectId : 'l'}-last_contact"><div class="aif-label">Последний контакт</div><input type="text" class="aif-edit-input" value="${escapeHtml(data.last_contact || data.date || l.last_contact || l.date || '')}" placeholder="ГГГГ-ММ-ДД или ДД.ММ.ГГГГ" data-lead-id="${leadId}" data-object-id="${objectId != null ? objectId : ''}" onblur="saveLastContactOnBlur(this)" title="Меняйте дату, чтобы убрать из выбранного периода аналитики"></div>
         ${dealAmountRowWithId}
         <div class="ai-field ai-field-toggle" id="cardField-${leadId}-communication_done">
           <div class="aif-label">Завершил общение</div>

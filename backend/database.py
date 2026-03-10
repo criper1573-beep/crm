@@ -68,9 +68,14 @@ def init_db() -> None:
                 work_types TEXT NOT NULL DEFAULT '[]',
                 description TEXT NOT NULL DEFAULT '',
                 deal_amount INTEGER,
+                last_contact TEXT NOT NULL DEFAULT '',
                 sort_order INTEGER NOT NULL DEFAULT 0
             )
         """)
+        cur = conn.execute("PRAGMA table_info(lead_objects)")
+        obj_cols = [r[1] for r in cur.fetchall()]
+        if "last_contact" not in obj_cols:
+            conn.execute("ALTER TABLE lead_objects ADD COLUMN last_contact TEXT NOT NULL DEFAULT ''")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS notes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -268,7 +273,7 @@ def delete_lead(lead_id: int) -> bool:
 def get_objects_by_lead_id(lead_id: int) -> list[dict]:
     with get_connection() as conn:
         cur = conn.execute(
-            "SELECT id, lead_id, name, address, object_type, budget, work_types, description, deal_amount, sort_order FROM lead_objects WHERE lead_id = ? ORDER BY sort_order, id",
+            "SELECT id, lead_id, name, address, object_type, budget, work_types, description, deal_amount, last_contact, sort_order FROM lead_objects WHERE lead_id = ? ORDER BY sort_order, id",
             (lead_id,),
         )
         return [_lead_object_row_to_dict(r) for r in cur.fetchall()]
@@ -277,7 +282,7 @@ def get_objects_by_lead_id(lead_id: int) -> list[dict]:
 def get_object_by_id(object_id: int) -> dict | None:
     with get_connection() as conn:
         cur = conn.execute(
-            "SELECT id, lead_id, name, address, object_type, budget, work_types, description, deal_amount, sort_order FROM lead_objects WHERE id = ?",
+            "SELECT id, lead_id, name, address, object_type, budget, work_types, description, deal_amount, last_contact, sort_order FROM lead_objects WHERE id = ?",
             (object_id,),
         )
         row = cur.fetchone()
@@ -286,10 +291,11 @@ def get_object_by_id(object_id: int) -> dict | None:
 
 def create_lead_object(lead_id: int, obj: LeadObjectCreate) -> int:
     work_types_json = json.dumps(getattr(obj, "work_types", []) or [])
+    last_contact = getattr(obj, "last_contact", "") or ""
     with get_connection() as conn:
         cur = conn.execute(
-            """INSERT INTO lead_objects (lead_id, name, address, object_type, budget, work_types, description, deal_amount, sort_order)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO lead_objects (lead_id, name, address, object_type, budget, work_types, description, deal_amount, last_contact, sort_order)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 lead_id,
                 obj.name or "Объект",
@@ -299,6 +305,7 @@ def create_lead_object(lead_id: int, obj: LeadObjectCreate) -> int:
                 work_types_json,
                 obj.description or "",
                 obj.deal_amount,
+                last_contact,
                 getattr(obj, "sort_order", 0) or 0,
             ),
         )
@@ -315,6 +322,7 @@ def update_lead_object(object_id: int, obj: LeadObjectCreate | dict) -> bool:
         work_types = obj.get("work_types", [])
         description = obj.get("description", "")
         deal_amount = obj.get("deal_amount")
+        last_contact = obj.get("last_contact", "")
         sort_order = obj.get("sort_order", 0)
     else:
         name = obj.name or "Объект"
@@ -324,12 +332,13 @@ def update_lead_object(object_id: int, obj: LeadObjectCreate | dict) -> bool:
         work_types = getattr(obj, "work_types", []) or []
         description = obj.description or ""
         deal_amount = obj.deal_amount
+        last_contact = getattr(obj, "last_contact", "") or ""
         sort_order = getattr(obj, "sort_order", 0) or 0
     work_types_json = json.dumps(work_types) if isinstance(work_types, list) else work_types
     with get_connection() as conn:
         cur = conn.execute(
-            """UPDATE lead_objects SET name = ?, address = ?, object_type = ?, budget = ?, work_types = ?, description = ?, deal_amount = ?, sort_order = ? WHERE id = ?""",
-            (name, address, object_type, budget, work_types_json, description, deal_amount, sort_order, object_id),
+            """UPDATE lead_objects SET name = ?, address = ?, object_type = ?, budget = ?, work_types = ?, description = ?, deal_amount = ?, last_contact = ?, sort_order = ? WHERE id = ?""",
+            (name, address, object_type, budget, work_types_json, description, deal_amount, last_contact, sort_order, object_id),
         )
         conn.commit()
         return cur.rowcount > 0
@@ -353,8 +362,8 @@ def migrate_lead_to_first_object(lead_id: int) -> int | None:
         if isinstance(work_types_json, list):
             work_types_json = json.dumps(work_types_json)
         cur = conn.execute(
-            """INSERT INTO lead_objects (lead_id, name, address, object_type, budget, work_types, description, deal_amount, sort_order)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)""",
+            """INSERT INTO lead_objects (lead_id, name, address, object_type, budget, work_types, description, deal_amount, last_contact, sort_order)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""",
             (
                 lead_id,
                 "Объект 1",
@@ -364,6 +373,7 @@ def migrate_lead_to_first_object(lead_id: int) -> int | None:
                 work_types_json,
                 lead.get("description") or "",
                 lead.get("deal_amount"),
+                lead.get("last_contact") or "",
             ),
         )
         obj_id = cur.lastrowid

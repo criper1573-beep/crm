@@ -1175,21 +1175,22 @@ function renderOverview(l) {
     <div class="overview-object-switcher">
       <div class="rp-sec">Объекты</div>
       <div class="object-tabs">
-        ${(l.objects || []).map(o => `
-          <div class="object-tab-wrap">
-            <button type="button" class="dbtn object-tab ${(o.id === activeObjectId) ? 'active' : ''}" onclick="selectOverviewObject(${o.id})">${escapeHtml(o.name || 'Объект')}</button>
-            <button type="button" class="object-tab-edit" onclick="event.stopPropagation();renameOverviewObject(${leadId}, ${o.id})" title="Переименовать">✎</button>
-            ${(l.objects || []).length > 1 ? `<button type="button" class="object-tab-del" onclick="event.stopPropagation();deleteOverviewObject(${leadId}, ${o.id})" title="Удалить">×</button>` : ''}
-          </div>
-        `).join('')}
+        ${(l.objects || []).map(o => `<button type="button" class="dbtn object-tab ${(o.id === activeObjectId) ? 'active' : ''}" onclick="selectOverviewObject(${o.id})">${escapeHtml(o.name || 'Объект')}</button>`).join('')}
         <button type="button" class="dbtn object-tab-add" onclick="addOverviewObject(${leadId})">+ Новый</button>
       </div>
+    </div>
+  ` : '';
+  const cardObjectActions = (objectId != null && l.objects && l.objects.length) ? `
+    <div class="object-card-actions">
+      <div class="ai-field" id="cardField-${leadId}-${objectId}-name"><div class="aif-label">Название объекта</div><input type="text" class="aif-edit-input" value="${escapeHtml(data.name || 'Объект')}" placeholder="Название" onblur="saveObjectNameOnBlur(this, ${leadId}, ${objectId})"></div>
+      ${l.objects.length > 1 ? `<button type="button" class="dbtn object-card-delete" onclick="deleteOverviewObject(${leadId}, ${objectId})" title="Удалить объект">Удалить объект</button>` : ''}
     </div>
   ` : '';
   return `
     ${objSwitcher}
     <div class="ai-card lead-card-block">
       <div class="ai-label">КАРТОЧКА ОБЪЕКТА</div>
+      ${cardObjectActions}
       <div class="ai-grid">
         <div class="ai-field" id="cardField-${leadId}-${objectId || 'l'}-budget"><div class="aif-label">Бюджет</div><select class="aif-edit-select" onchange="updateOverviewField(${leadId}, ${objectId || 'null'}, 'budget', this.value)">${budgetOpts}</select></div>
         <div class="ai-field" id="cardField-${leadId}-${objectId || 'l'}-object_type"><div class="aif-label">Тип объекта</div><select class="aif-edit-select" onchange="updateOverviewField(${leadId}, ${objectId || 'null'}, 'object_type', this.value)">${objectOpts}</select></div>
@@ -1278,14 +1279,14 @@ async function addOverviewObject(leadId) {
   if (activeTab === 'overview') loadNotesIntoFeed(leadId, created.id);
 }
 
-async function renameOverviewObject(leadId, objectId) {
+async function saveObjectNameOnBlur(inputEl, leadId, objectId) {
   const l = leads.find(x => x.id === leadId);
   const obj = (l && l.objects || []).find(o => o.id === objectId);
-  if (!obj) return;
-  const name = prompt('Название объекта:', obj.name || 'Объект');
-  if (name == null || name.trim() === '') return;
-  const updated = await apiUpdateObject(leadId, objectId, { ...obj, name: name.trim() });
-  if (updated) { obj.name = updated.name; renderDetail(); }
+  if (!obj || !inputEl) return;
+  const name = (inputEl.value || '').trim() || (obj.name || 'Объект');
+  if (name === (obj.name || 'Объект')) return;
+  const updated = await apiUpdateObject(leadId, objectId, { ...obj, name });
+  if (updated) { obj.name = updated.name; showSaveIndicator('cardField-' + leadId + '-' + objectId + '-name'); }
 }
 
 async function deleteOverviewObject(leadId, objectId) {

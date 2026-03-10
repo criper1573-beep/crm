@@ -382,10 +382,10 @@ header::before {
 .object-tab.active{background:var(--accent);color:var(--bg);border-color:var(--accent);}
 .object-tab-add{opacity:0.8;}
 .object-tab-add:hover{opacity:1;}
-.object-tab-wrap{display:inline-flex;align-items:center;gap:2px;}
-.object-tab-edit,.object-tab-del{font-size:10px;padding:2px 4px;min-width:22px;background:transparent;border:none;color:var(--muted);cursor:pointer;}
-.object-tab-edit:hover,.object-tab-del:hover{color:var(--text);}
-.object-tab-del:hover{color:var(--hot);}
+.object-card-actions{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px 16px;margin-bottom:12px;}
+.object-card-actions .ai-field{min-width:160px;}
+.object-card-delete{font-size:10px;color:var(--hot);border-color:rgba(255,77,109,0.5);align-self:flex-end;}
+.object-card-delete:hover{background:rgba(255,77,109,0.1);}
 .work-type-cb{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--text2);cursor:pointer;}
 .work-type-cb input{cursor:pointer;}
 .overview-desc-block .overview-block-title{font-size:8px;letter-spacing:.1em;color:var(--muted);text-transform:uppercase;}

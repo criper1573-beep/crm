@@ -49,6 +49,12 @@ def init_db() -> None:
             conn.execute("ALTER TABLE leads ADD COLUMN deal_amount INTEGER")
         if "communication_done" not in cols:
             conn.execute("ALTER TABLE leads ADD COLUMN communication_done INTEGER NOT NULL DEFAULT 0")
+        if "extra_phones" not in cols:
+            conn.execute("ALTER TABLE leads ADD COLUMN extra_phones TEXT NOT NULL DEFAULT ''")
+        if "max_link" not in cols:
+            conn.execute("ALTER TABLE leads ADD COLUMN max_link TEXT NOT NULL DEFAULT ''")
+        if "tg_link" not in cols:
+            conn.execute("ALTER TABLE leads ADD COLUMN tg_link TEXT NOT NULL DEFAULT ''")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS notes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -114,7 +120,7 @@ def _get_last_message_per_lead() -> dict[int, dict]:
 def get_all_leads() -> list[dict]:
     with get_connection() as conn:
         cur = conn.execute(
-            "SELECT id, name, phone, avito_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, communication_done, created_at FROM leads ORDER BY id"
+            "SELECT id, name, phone, extra_phones, avito_link, max_link, tg_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, communication_done, created_at FROM leads ORDER BY id"
         )
         leads_list = [_lead_row_to_dict(r) for r in cur.fetchall()]
     last_msgs = _get_last_message_per_lead()
@@ -128,7 +134,7 @@ def get_all_leads() -> list[dict]:
 def get_lead_by_id(lead_id: int) -> dict | None:
     with get_connection() as conn:
         cur = conn.execute(
-            "SELECT id, name, phone, avito_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, communication_done, created_at FROM leads WHERE id = ?",
+            "SELECT id, name, phone, extra_phones, avito_link, max_link, tg_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, communication_done, created_at FROM leads WHERE id = ?",
             (lead_id,),
         )
         row = cur.fetchone()
@@ -142,12 +148,15 @@ def create_lead(lead: Lead) -> int:
     with get_connection() as conn:
         deal_amount = getattr(lead, "deal_amount", None)
         cur = conn.execute(
-            """INSERT INTO leads (name, phone, avito_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, communication_done)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO leads (name, phone, extra_phones, avito_link, max_link, tg_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, communication_done)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 lead.name,
                 lead.phone,
+                getattr(lead, "extra_phones", "") or "",
                 lead.avito_link,
+                getattr(lead, "max_link", "") or "",
+                getattr(lead, "tg_link", "") or "",
                 lead.address,
                 lead.object_type,
                 lead.budget,
@@ -172,13 +181,16 @@ def update_lead(lead_id: int, lead: Lead) -> bool:
     with get_connection() as conn:
         cur = conn.execute(
             """UPDATE leads SET
-                name = ?, phone = ?, avito_link = ?, address = ?, object_type = ?, budget = ?, status = ?,
+                name = ?, phone = ?, extra_phones = ?, avito_link = ?, max_link = ?, tg_link = ?, address = ?, object_type = ?, budget = ?, status = ?,
                 last_contact = ?, comment = ?, work_types = ?, description = ?, deal_amount = ?, communication_done = ?
                WHERE id = ?""",
             (
                 lead.name,
                 lead.phone,
+                getattr(lead, "extra_phones", "") or "",
                 lead.avito_link,
+                getattr(lead, "max_link", "") or "",
+                getattr(lead, "tg_link", "") or "",
                 lead.address,
                 lead.object_type,
                 lead.budget,

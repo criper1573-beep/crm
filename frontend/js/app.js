@@ -82,7 +82,10 @@ function getLeadPayloadForUpdate(l, overrides = {}) {
   return {
     name: l.name,
     phone: l.phone || '',
+    extra_phones: l.extra_phones || '',
     avito_link: l.avito_link ?? l.link ?? '',
+    max_link: l.max_link || '',
+    tg_link: l.tg_link || '',
     address: l.address || '',
     object_type: l.object_type ?? l.obj ?? '',
     budget: l.budget,
@@ -104,6 +107,14 @@ function escapeHtml(s) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+function normalizeTgLink(s) {
+  if (!s || !String(s).trim()) return '#';
+  const t = String(s).trim();
+  if (/^https?:\/\//i.test(t)) return t;
+  const username = t.replace(/^@/, '').split(/[\s/]/)[0];
+  return 'https://t.me/' + encodeURIComponent(username);
 }
 
 function startEditComment(id) {
@@ -729,6 +740,8 @@ function renderDetail() {
       <div class="d-actions">
         ${l.phone ? `<a href="tel:${(l.phone).replace(/[^\d+]/g, '')}" class="dbtn dbtn-tel" title="Позвонить">📞 ${escapeHtml(l.phone)}</a>` : ''}
         ${(l.avito_link || l.link) ? `<a href="${escapeHtml((l.avito_link || l.link).trim())}" target="_blank" rel="noopener" style="text-decoration:none"><button class="dbtn">🔗 Авито</button></a>` : `<button class="dbtn" disabled style="opacity:0.5;cursor:not-allowed;color:var(--muted)">🔗 Авито</button>`}
+        ${(() => { const u = (l.max_link || '').trim(); return u && (u.startsWith('http://') || u.startsWith('https://')) ? `<a href="${escapeHtml(u)}" target="_blank" rel="noopener" class="dbtn" title="МАХ">МАХ</a>` : ''; })()}
+        ${(l.tg_link || '').trim() ? `<a href="${normalizeTgLink(l.tg_link)}" target="_blank" rel="noopener" class="dbtn dbtn-tel" title="Telegram">TG</a>` : ''}
         <div class="status-dropdown" id="statusDropdown">
           <button type="button" class="dbtn" onclick="toggleStatusDropdown(event)">${si.label} ▼</button>
           <div class="status-dropdown-menu" id="statusDropdownMenu">
@@ -1040,6 +1053,9 @@ function renderOverview(l) {
         <div class="ai-field" id="cardField-${l.id}-budget"><div class="aif-label">Бюджет</div><select class="aif-edit-select" onchange="updateLeadField(${l.id}, 'budget', this.value)">${budgetOpts}</select></div>
         <div class="ai-field" id="cardField-${l.id}-object_type"><div class="aif-label">Тип объекта</div><select class="aif-edit-select" onchange="updateLeadField(${l.id}, 'object_type', this.value)">${objectOpts}</select></div>
         <div class="ai-field" id="cardField-${l.id}-address"><div class="aif-label">Адрес</div><input type="text" class="aif-edit-input" value="${escapeHtml(l.address || '')}" placeholder="Адрес" onblur="updateLeadField(${l.id}, 'address', this.value)"></div>
+        <div class="ai-field" id="cardField-${l.id}-extra_phones"><div class="aif-label">Доп. телефоны</div><input type="text" class="aif-edit-input" value="${escapeHtml(l.extra_phones || '')}" placeholder="+7 ... через запятую" onblur="updateLeadField(${l.id}, 'extra_phones', this.value)"></div>
+        <div class="ai-field" id="cardField-${l.id}-max_link"><div class="aif-label">Ссылка МАХ</div><input type="text" class="aif-edit-input" value="${escapeHtml(l.max_link || '')}" placeholder="https://..." onblur="updateLeadField(${l.id}, 'max_link', this.value)"></div>
+        <div class="ai-field" id="cardField-${l.id}-tg_link"><div class="aif-label">Ссылка TG</div><input type="text" class="aif-edit-input" value="${escapeHtml(l.tg_link || '')}" placeholder="https://t.me/ или @username" onblur="updateLeadField(${l.id}, 'tg_link', this.value)"></div>
         <div class="ai-field"><div class="aif-label">Последний контакт</div><div class="aif-val" id="lastContactDisplay-${l.id}">${l.date||'—'}</div></div>
         ${dealAmountRowWithId}
         <div class="ai-field ai-field-toggle" id="cardField-${l.id}-communication_done">

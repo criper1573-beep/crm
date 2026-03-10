@@ -681,7 +681,7 @@ function updateStats() {
 // ─── RENDER LIST ───────────────────────────────────────────
 function renderList() {
   const q = document.getElementById('searchInput').value.toLowerCase();
-  const leadsInPeriod = getLeadsForPeriod();
+  const leadsInPeriod = currentFilter === 'all' ? leads : getLeadsForPeriod();
   const filtered = leadsInPeriod.filter(l => {
     const matchFilter = currentFilter === 'all' ||
       (CONFIG.statuses && currentFilter in CONFIG.statuses ? l.status === currentFilter : getStatusGroup(l.status) === currentFilter);

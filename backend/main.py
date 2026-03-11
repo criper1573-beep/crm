@@ -495,6 +495,14 @@ def _process_avito_webhook_payload(body: dict) -> None:
 @app.post("/api/avito/webhook")
 async def avito_webhook(request: Request, background_tasks: BackgroundTasks):
     """Принимает webhook-уведомления от Авито Мессенджер. Ответ 200 — в течение 2 с (требование Авито)."""
+    log = logging.getLogger("backend.main")
+    # Диагностика: любой запрос на webhook (в т.ч. проверка Авито при регистрации)
+    try:
+        client_host = request.client.host if request.client else ""
+        forwarded = request.headers.get("x-forwarded-for", "")
+        log.info("Avito webhook request: host=%s x-forwarded-for=%s", client_host, forwarded)
+    except Exception:
+        pass
     try:
         body = await request.json()
     except Exception:
@@ -566,6 +574,73 @@ def avito_register_webhook(body: AvitoRegisterWebhook):
     except Exception as e:
         logging.getLogger("backend.main").exception("Avito register webhook: %s", e)
         raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.get("/api/avito/diagnostic")
+def avito_diagnostic():
+    """Проверка цепочки: токен, аккаунт, подписки, доступ к сообщениям."""
+    import requests as _req
+    steps = []
+    try:
+        client = _get_avito_client()
+        token = client.get_token()
+        steps.append({"step": 1, "name": "token", "ok": True, "detail": "token received"})
+    except Exception as e:
+        steps.append({"step": 1, "name": "token", "ok": False, "detail": str(e)})
+        return JSONResponse(content={"steps": steps, "summary": "fail at token"})
+
+    try:
+        self_data = client.get_self()
+        uid = self_data.get("id")
+        name = self_data.get("name", "")
+        steps.append({"step": 2, "name": "account", "ok": True, "user_id": uid, "name": name})
+    except Exception as e:
+        steps.append({"step": 2, "name": "account", "ok": False, "detail": str(e)})
+        return JSONResponse(content={"steps": steps, "summary": "fail at account"})
+
+    try:
+        r = _req.post(
+            "https://api.avito.ru/messenger/v1/subscriptions",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={},
+            timeout=10,
+        )
+        data = r.json() if r.content else {}
+        subs = data.get("subscriptions", [])
+        steps.append({
+            "step": 3, "name": "subscriptions", "ok": r.status_code == 200,
+            "count": len(subs), "urls": [s.get("url") for s in subs], "version": [s.get("version") for s in subs],
+        })
+    except Exception as e:
+        steps.append({"step": 3, "name": "subscriptions", "ok": False, "detail": str(e)})
+
+    try:
+        chats = client.get_chats(limit=1)
+        steps.append({"step": 4, "name": "get_chats", "ok": True, "chats_count": len(chats)})
+        if chats:
+            cid = chats[0].get("id")
+            r = _req.get(
+                f"https://api.avito.ru/messenger/v3/accounts/{uid}/chats/{cid}/messages/",
+                headers={"Authorization": f"Bearer {token}"},
+                params={"limit": 1},
+                timeout=10,
+            )
+            steps.append({
+                "step": 5, "name": "get_messages", "ok": r.status_code == 200,
+                "status_code": r.status_code,
+                "detail": r.text[:200] if r.status_code != 200 else "ok",
+            })
+        else:
+            steps.append({"step": 5, "name": "get_messages", "ok": None, "detail": "no chats"})
+    except Exception as e:
+        steps.append({"step": 4, "name": "get_chats", "ok": False, "detail": str(e)})
+        steps.append({"step": 5, "name": "get_messages", "ok": None, "detail": "skipped"})
+
+    return JSONResponse(content={
+        "steps": steps,
+        "webhook_url": "https://crm.flowcabinet.ru/api/avito/webhook",
+        "summary": "ok" if all(s.get("ok") for s in steps if s.get("ok") is not None) else "check steps",
+    })
 
 
 # Статика фронтенда по корневому пути (подключать после /api)

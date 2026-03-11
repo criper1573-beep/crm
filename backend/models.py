@@ -26,7 +26,17 @@ class Lead(BaseModel):
     deal_amount: int | None = Field(default=None, description="Сумма сделки в рублях, может быть пустым")
     communication_done: bool = Field(default=False, description="Завершил общение — не показывать в «Требуют внимания»")
     has_multiple_objects: bool = Field(default=False, description="У клиента несколько объектов")
+    avito_chat_id: str | None = Field(default=None, description="ID чата Авито — привязка лида к мессенджеру")
+    avito_new_chat: bool = Field(default=False, description="Новый чат из Авито — флаг для алерта, сбрасывается при открытии")
     created_at: str | None = Field(default=None, description="Дата создания, заполняется автоматически")
+
+
+class AvitoSendMessage(BaseModel):
+    text: str = Field(..., description="Текст сообщения для отправки в Авито")
+
+
+class AvitoRegisterWebhook(BaseModel):
+    url: str = Field(..., description="URL для регистрации webhook в Авито")
 
 
 class LeadObject(BaseModel):

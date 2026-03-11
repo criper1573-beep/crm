@@ -27,6 +27,8 @@ function mapLeadFromApi(l) {
     date: l.last_contact ?? l.date ?? '',
     calls: l.calls ?? [],
     msgs: l.msgs ?? [],
+    avito_chat_id: l.avito_chat_id ?? null,
+    avito_new_chat: !!l.avito_new_chat,
   };
 }
 
@@ -645,6 +647,7 @@ function updateStats() {
   }
   const alertLeads = leads.filter(l => {
     if (l.communication_done) return false;
+    if (l.avito_new_chat) return true;
     const lastDir = (l.last_message_direction || '').toLowerCase();
     const lastDate = l.last_message_date || '';
     const hasMessages = !!lastDir;
@@ -655,6 +658,7 @@ function updateStats() {
     const cond2 = notDrain && (lastOutMoreThan24h || noMessagesLeadOld);
     return cond1 || cond2;
   }).map(l => {
+    if (l.avito_new_chat) return { ...l, _reason: '📩 Новый чат из Авито' };
     const lastDir = (l.last_message_direction || '').toLowerCase();
     const reason = lastDir === 'in' ? 'Клиент написал — нет ответа' : (() => {
       const refDate = lastDir === 'out' ? l.last_message_date : (l.created_at || '');
@@ -741,6 +745,11 @@ function openLead(id) {
     activeObjectId = l.objects[0].id;
   } else {
     activeObjectId = null;
+  }
+  // Сбросить флаг нового чата из Авито при открытии карточки
+  if (l && l.avito_new_chat) {
+    l.avito_new_chat = false;
+    apiAvitoSeen(id);
   }
   saveState();
   closeMobilePanels();
@@ -1383,7 +1392,11 @@ const MESSAGE_SOURCES = ['Авито', 'Телеграм', 'WhatsApp', 'Теле
 
 function renderMsgs(l) {
   const leadId = l.id;
+  const hasAvitoChat = !!(l.avito_chat_id);
   const sourcesOpts = (CONFIG.messageSources || MESSAGE_SOURCES).map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
+  const avitoSendBtn = hasAvitoChat
+    ? `<button type="button" id="msgAvitoBtn-${leadId}" class="dbtn dbtn-avito" onclick="sendToAvito(${leadId})">📨 Отправить в Авито</button>`
+    : '';
   return `
     <div id="messagesList-${leadId}" class="msg-thread messages-feed">Загрузка...</div>
     <div class="msg-form-tabs">
@@ -1396,6 +1409,7 @@ function renderMsgs(l) {
           <button type="button" class="dbtn" onclick="sendMessageAs(${leadId}, 'in')">← Входящее</button>
           <button type="button" class="dbtn primary" onclick="sendMessageAs(${leadId}, 'out')">Исходящее →</button>
           <button type="button" id="msgAiBtn-${leadId}" class="dbtn" onclick="requestAiReply(${leadId})">✦ AI ответ</button>
+          ${avitoSendBtn}
         </div>
       </div>
       <div class="msg-form-panel" data-msg-panel="paste">
@@ -1464,12 +1478,17 @@ function renderMessageItem(m, leadId) {
   const isOut = dir === 'out';
   const isIn = dir === 'in';
   const isUnknown = dir === 'unknown';
+  const isAvito = m.source === 'Авито';
   let bubbleClass = 'msg-bubble';
-  if (isOut) bubbleClass += ' msg-bubble-out';
+  if (isAvito) bubbleClass += ' msg-bubble-avito';
+  else if (isOut) bubbleClass += ' msg-bubble-out';
   else if (isIn) bubbleClass += ' msg-bubble-in';
   else bubbleClass += ' msg-bubble-unknown';
   let alignClass = 'msg-row';
-  if (isOut) alignClass += ' msg-row-out';
+  if (isAvito && isOut) alignClass += ' msg-row-out msg-from-avito';
+  else if (isAvito && isIn) alignClass += ' msg-row-in msg-from-avito';
+  else if (isAvito) alignClass += ' msg-from-avito';
+  else if (isOut) alignClass += ' msg-row-out';
   else if (isIn) alignClass += ' msg-row-in';
   else alignClass += ' msg-row-unknown';
   const dirButtons = isUnknown
@@ -1543,6 +1562,27 @@ async function requestAiReply(leadId) {
     alert(e && (e.message || String(e)) || 'Ошибка генерации ответа');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '✦ AI ответ'; }
+  }
+}
+
+async function sendToAvito(leadId) {
+  const input = document.getElementById('msgText-' + leadId);
+  if (!input) return;
+  const text = input.value.trim();
+  if (!text) return;
+  const btn = document.getElementById('msgAvitoBtn-' + leadId);
+  if (btn) { btn.disabled = true; btn.textContent = 'Отправляю...'; }
+  try {
+    const msg = await apiSendToAvito(leadId, text);
+    if (!msg) throw new Error('Нет ответа от сервера');
+    input.value = '';
+    await loadMessagesIntoFeed(leadId);
+    const listEl = document.getElementById('messagesList-' + leadId);
+    if (listEl) listEl.scrollTop = listEl.scrollHeight;
+  } catch (e) {
+    alert('Ошибка отправки в Авито: ' + (e && (e.message || String(e))));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '📨 Отправить в Авито'; }
   }
 }
 

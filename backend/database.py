@@ -88,6 +88,10 @@ def init_db() -> None:
         note_cols = [r[1] for r in cur.fetchall()]
         if "lead_object_id" not in note_cols:
             conn.execute("ALTER TABLE notes ADD COLUMN lead_object_id INTEGER REFERENCES lead_objects(id)")
+        if "avito_chat_id" not in cols:
+            conn.execute("ALTER TABLE leads ADD COLUMN avito_chat_id TEXT")
+        if "avito_new_chat" not in cols:
+            conn.execute("ALTER TABLE leads ADD COLUMN avito_new_chat INTEGER NOT NULL DEFAULT 0")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -95,9 +99,14 @@ def init_db() -> None:
                 text TEXT NOT NULL,
                 direction TEXT NOT NULL,
                 source TEXT NOT NULL,
-                created_at TEXT DEFAULT (datetime('now'))
+                created_at TEXT DEFAULT (datetime('now')),
+                avito_message_id TEXT
             )
         """)
+        cur = conn.execute("PRAGMA table_info(messages)")
+        msg_cols = [r[1] for r in cur.fetchall()]
+        if "avito_message_id" not in msg_cols:
+            conn.execute("ALTER TABLE messages ADD COLUMN avito_message_id TEXT")
         conn.commit()
 
 
@@ -128,6 +137,12 @@ def _lead_row_to_dict(row: sqlite3.Row) -> dict:
         d["has_multiple_objects"] = False
     elif d.get("has_multiple_objects") is not None:
         d["has_multiple_objects"] = bool(int(d["has_multiple_objects"]))
+    if "avito_new_chat" not in d:
+        d["avito_new_chat"] = False
+    elif d.get("avito_new_chat") is not None:
+        d["avito_new_chat"] = bool(int(d["avito_new_chat"]))
+    if "avito_chat_id" not in d:
+        d["avito_chat_id"] = None
     return d
 
 
@@ -164,7 +179,7 @@ def _get_last_message_per_lead() -> dict[int, dict]:
 def get_all_leads() -> list[dict]:
     with get_connection() as conn:
         cur = conn.execute(
-            "SELECT id, name, phone, extra_phones, avito_link, max_link, tg_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, communication_done, has_multiple_objects, created_at FROM leads ORDER BY id"
+            "SELECT id, name, phone, extra_phones, avito_link, max_link, tg_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, communication_done, has_multiple_objects, avito_chat_id, avito_new_chat, created_at FROM leads ORDER BY id"
         )
         leads_list = [_lead_row_to_dict(r) for r in cur.fetchall()]
     last_msgs = _get_last_message_per_lead()
@@ -185,7 +200,7 @@ def get_all_leads() -> list[dict]:
 def get_lead_by_id(lead_id: int) -> dict | None:
     with get_connection() as conn:
         cur = conn.execute(
-            "SELECT id, name, phone, extra_phones, avito_link, max_link, tg_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, communication_done, has_multiple_objects, created_at FROM leads WHERE id = ?",
+            "SELECT id, name, phone, extra_phones, avito_link, max_link, tg_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, communication_done, has_multiple_objects, avito_chat_id, avito_new_chat, created_at FROM leads WHERE id = ?",
             (lead_id,),
         )
         row = cur.fetchone()
@@ -197,11 +212,13 @@ def create_lead(lead: Lead) -> int:
     description = getattr(lead, "description", "") or ""
     comm_done = 1 if getattr(lead, "communication_done", False) else 0
     has_multi = 1 if getattr(lead, "has_multiple_objects", False) else 0
+    avito_chat_id = getattr(lead, "avito_chat_id", None)
+    avito_new_chat = 1 if getattr(lead, "avito_new_chat", False) else 0
     with get_connection() as conn:
         deal_amount = getattr(lead, "deal_amount", None)
         cur = conn.execute(
-            """INSERT INTO leads (name, phone, extra_phones, avito_link, max_link, tg_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, communication_done, has_multiple_objects)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO leads (name, phone, extra_phones, avito_link, max_link, tg_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, communication_done, has_multiple_objects, avito_chat_id, avito_new_chat)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 lead.name,
                 lead.phone,
@@ -220,6 +237,8 @@ def create_lead(lead: Lead) -> int:
                 deal_amount,
                 comm_done,
                 has_multi,
+                avito_chat_id,
+                avito_new_chat,
             ),
         )
         conn.commit()
@@ -435,7 +454,7 @@ def delete_note(note_id: int) -> bool:
 def get_messages_by_lead_id(lead_id: int) -> list[dict]:
     with get_connection() as conn:
         cur = conn.execute(
-            "SELECT id, lead_id, text, direction, source, created_at FROM messages WHERE lead_id = ? ORDER BY created_at ASC",
+            "SELECT id, lead_id, text, direction, source, created_at, avito_message_id FROM messages WHERE lead_id = ? ORDER BY created_at ASC",
             (lead_id,),
         )
         return [_row_to_dict(r) for r in cur.fetchall()]
@@ -485,7 +504,7 @@ def create_messages_bulk(lead_id: int, items: list[MessageBulkItem]) -> list[int
 def get_message_by_id(message_id: int) -> dict | None:
     with get_connection() as conn:
         cur = conn.execute(
-            "SELECT id, lead_id, text, direction, source, created_at FROM messages WHERE id = ?",
+            "SELECT id, lead_id, text, direction, source, created_at, avito_message_id FROM messages WHERE id = ?",
             (message_id,),
         )
         row = cur.fetchone()
@@ -497,6 +516,92 @@ def delete_message(message_id: int) -> bool:
         cur = conn.execute("DELETE FROM messages WHERE id = ?", (message_id,))
         conn.commit()
         return cur.rowcount > 0
+
+
+def get_lead_by_avito_chat_id(avito_chat_id: str) -> dict | None:
+    """Найти лид по ID чата Авито."""
+    with get_connection() as conn:
+        cur = conn.execute(
+            "SELECT id, name, phone, extra_phones, avito_link, max_link, tg_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, communication_done, has_multiple_objects, avito_chat_id, avito_new_chat, created_at FROM leads WHERE avito_chat_id = ?",
+            (avito_chat_id,),
+        )
+        row = cur.fetchone()
+        return _lead_row_to_dict(row) if row else None
+
+
+def create_avito_lead(avito_chat_id: str, name: str = "", avito_link: str = "") -> int:
+    """Создать новый лид из чата Авито с флагом avito_new_chat=1."""
+    with get_connection() as conn:
+        cur = conn.execute(
+            """INSERT INTO leads (name, phone, avito_link, address, object_type, budget, status,
+               work_types, description, communication_done, has_multiple_objects,
+               avito_chat_id, avito_new_chat)
+               VALUES (?, '', ?, '', 'Квартира', 'lo', 'lead', '[]', '', 0, 0, ?, 1)""",
+            (name or "Авито клиент", avito_link or "", avito_chat_id),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def avito_message_exists(avito_message_id: str) -> bool:
+    """Проверить, есть ли уже сообщение с таким avito_message_id (дедупликация)."""
+    with get_connection() as conn:
+        cur = conn.execute(
+            "SELECT id FROM messages WHERE avito_message_id = ?",
+            (avito_message_id,),
+        )
+        return cur.fetchone() is not None
+
+
+def create_avito_message(
+    lead_id: int,
+    text: str,
+    direction: str,
+    created_at: str | None,
+    avito_message_id: str,
+) -> int | None:
+    """Вставить сообщение из Авито с дедупликацией по avito_message_id.
+    Возвращает id созданного сообщения или None если уже существует."""
+    if avito_message_exists(avito_message_id):
+        return None
+    with get_connection() as conn:
+        if created_at:
+            cur = conn.execute(
+                "INSERT INTO messages (lead_id, text, direction, source, created_at, avito_message_id) VALUES (?, ?, ?, 'Авито', ?, ?)",
+                (lead_id, text, direction, created_at, avito_message_id),
+            )
+        else:
+            cur = conn.execute(
+                "INSERT INTO messages (lead_id, text, direction, source, avito_message_id) VALUES (?, ?, ?, 'Авито', ?)",
+                (lead_id, text, direction, avito_message_id),
+            )
+        conn.commit()
+    if direction == "in":
+        set_lead_communication_done(lead_id, False)
+    return cur.lastrowid
+
+
+def set_lead_avito_new_chat(lead_id: int, value: bool) -> None:
+    """Установить/сбросить флаг avito_new_chat у лида."""
+    with get_connection() as conn:
+        conn.execute("UPDATE leads SET avito_new_chat = ? WHERE id = ?", (1 if value else 0, lead_id))
+        conn.commit()
+
+
+def update_lead_avito_info(lead_id: int, name: str | None = None, avito_link: str | None = None) -> None:
+    """Обновить имя/ссылку лида из данных чата Авито (только если поле пустое/плейсхолдер)."""
+    with get_connection() as conn:
+        if name:
+            conn.execute(
+                "UPDATE leads SET name = ? WHERE id = ? AND name IN ('Авито клиент', '')",
+                (name, lead_id),
+            )
+        if avito_link:
+            conn.execute(
+                "UPDATE leads SET avito_link = ? WHERE id = ? AND avito_link = ''",
+                (avito_link, lead_id),
+            )
+        conn.commit()
 
 
 def update_message_direction(message_id: int, direction: str) -> bool:

@@ -254,3 +254,52 @@ async function apiGenerateReply(leadId) {
   return body;
 }
 if (typeof window !== 'undefined') window.apiGenerateReply = apiGenerateReply;
+
+async function apiSendToAvito(leadId, text) {
+  try {
+    const res = await fetch(`${BASE}/leads/${leadId}/send-avito`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const msg = body.detail || res.statusText;
+      throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    }
+    return body;
+  } catch (e) {
+    console.error('apiSendToAvito:', e);
+    throw e;
+  }
+}
+
+async function apiAvitoSeen(leadId) {
+  try {
+    const res = await fetch(`${BASE}/leads/${leadId}/avito-seen`, { method: 'POST' });
+    if (!res.ok) throw new Error(res.statusText);
+    return await res.json();
+  } catch (e) {
+    console.error('apiAvitoSeen:', e);
+    return null;
+  }
+}
+
+async function apiRegisterAvitoWebhook(url) {
+  try {
+    const res = await fetch(`${BASE}/avito/register-webhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const msg = body.detail || res.statusText;
+      throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    }
+    return body;
+  } catch (e) {
+    console.error('apiRegisterAvitoWebhook:', e);
+    throw e;
+  }
+}

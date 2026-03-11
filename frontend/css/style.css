@@ -474,6 +474,14 @@ header::before {
 .msg-bubble-out{background:rgba(124,92,252,.25);border:1px solid rgba(124,92,252,.4);border-bottom-right-radius:2px;}
 .msg-bubble-in{background:var(--surface2);border:1px solid var(--border);border-bottom-left-radius:2px;}
 .msg-bubble-unknown{background:var(--surface);border:1px solid var(--border);color:var(--text2);}
+/* Авито сообщения — бирюзовые */
+.msg-from-avito.msg-row-out .msg-bubble-avito,.msg-bubble-avito{background:rgba(0,229,255,.12);border:1px solid rgba(0,229,255,.35);}
+.msg-from-avito.msg-row-out .msg-bubble-avito{border-bottom-right-radius:2px;}
+.msg-from-avito.msg-row-in .msg-bubble-avito{border-bottom-left-radius:2px;}
+.msg-from-avito .msg-meta{color:rgba(0,229,255,.6);}
+/* Кнопка отправки в Авито */
+.dbtn-avito{color:var(--repeat);border-color:rgba(0,229,255,.4);}
+.dbtn-avito:hover{background:rgba(0,229,255,.1);border-color:var(--repeat);}
 .msg-text{word-break:break-word;}
 .msg-meta{font-size:8px;color:var(--muted);margin-top:6px;}
 .msg-dir-btns{display:flex;gap:6px;margin-top:6px;}

@@ -1,16 +1,18 @@
 # FastAPI app
 
 import logging
+from datetime import datetime as _dt
 from pathlib import Path
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend import database
-from backend.models import Lead, LeadObjectCreate, NoteCreate, MessageCreate, MessageBulkItem, MessageDirectionUpdate
+from backend.models import Lead, LeadObjectCreate, NoteCreate, MessageCreate, MessageBulkItem, MessageDirectionUpdate, AvitoSendMessage, AvitoRegisterWebhook
 from backend import grs_ai
+from backend import avito
 
 app = FastAPI()
 
@@ -366,6 +368,204 @@ def generate_reply(lead_id: int):
         raise HTTPException(status_code=502, detail=str(e))
     reply = _normalize_summary_text(reply.strip() or "")
     return {"reply": reply}
+
+
+_avito_client: avito.AvitoClient | None = None
+
+
+def _get_avito_client() -> avito.AvitoClient:
+    global _avito_client
+    if _avito_client is None:
+        _avito_client = avito.AvitoClient()
+    return _avito_client
+
+
+@app.get("/api/avito/self")
+def avito_self():
+    """Проверка подключения Авито: user_id и имя аккаунта."""
+    try:
+        client = _get_avito_client()
+        data = client.get_self()
+        user_id = data.get("id")
+        name = data.get("name") or data.get("profile", {}).get("name") or ""
+        return {"user_id": str(user_id) if user_id is not None else None, "name": name}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logging.getLogger("backend.main").exception("Avito self: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+def _load_avito_chat_history(lead_id: int, chat_id: str) -> None:
+    """Фоновая задача: подгрузить историю чата Авито в переписку CRM при создании нового лида."""
+    log = logging.getLogger("backend.main")
+    try:
+        client = _get_avito_client()
+        # Попытаться получить имя клиента и ссылку на объявление из данных чата
+        try:
+            chat = client.get_chat_by_id(chat_id)
+            my_user_id = str(client.user_id or "")
+            users = chat.get("users") or []
+            other_user = next(
+                (u for u in users if str(u.get("id", "")) != my_user_id),
+                None,
+            )
+            if other_user:
+                name = (other_user.get("name") or "").strip()
+                profile = other_user.get("public_user_profile") or {}
+                avito_link = (profile.get("url") or "").strip()
+                database.update_lead_avito_info(lead_id, name=name or None, avito_link=avito_link or None)
+            context = chat.get("context") or {}
+            ctx_value = context.get("value") or {}
+            item_url = (ctx_value.get("url") or "").strip()
+            if item_url:
+                database.update_lead_avito_info(lead_id, avito_link=item_url)
+        except Exception as e:
+            log.warning("Avito get_chat_by_id for chat %s: %s", chat_id, e)
+
+        # Загрузить сообщения из чата
+        messages = client.get_messages(chat_id, limit=100)
+        my_user_id = str(client.user_id or "")
+        inserted = 0
+        for msg in messages:
+            msg_id = str(msg.get("id") or "")
+            if not msg_id:
+                continue
+            msg_type = msg.get("type", "")
+            if msg_type not in ("text",):
+                continue
+            content = msg.get("content") or {}
+            text = (content.get("text") or "").strip()
+            if not text:
+                continue
+            # direction: из API сообщений, либо вычислить по author_id
+            direction = msg.get("direction", "")
+            if not direction:
+                author_id = str(msg.get("author_id") or "")
+                direction = "out" if author_id == my_user_id else "in"
+            created_ts = msg.get("created")
+            created_at = (
+                _dt.utcfromtimestamp(created_ts).strftime("%Y-%m-%d %H:%M:%S")
+                if created_ts else None
+            )
+            result = database.create_avito_message(lead_id, text, direction, created_at, msg_id)
+            if result is not None:
+                inserted += 1
+        log.info("Avito chat history loaded for lead %s, chat %s: %d messages inserted", lead_id, chat_id, inserted)
+    except Exception as e:
+        log.exception("Load avito chat history for lead %s, chat %s: %s", lead_id, chat_id, e)
+
+
+@app.post("/api/avito/webhook")
+async def avito_webhook(request: Request, background_tasks: BackgroundTasks):
+    """Принимает webhook-уведомления от Авито Мессенджер."""
+    log = logging.getLogger("backend.main")
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(status_code=200, content={"ok": True})
+
+    payload = body.get("payload") or {}
+    if payload.get("type") != "message":
+        return JSONResponse(status_code=200, content={"ok": True})
+
+    value = payload.get("value") or {}
+    chat_id = (value.get("chat_id") or "").strip()
+    msg_id = str(value.get("id") or "").strip()
+    msg_type = (value.get("type") or "").strip()
+
+    if not chat_id or not msg_id:
+        return JSONResponse(status_code=200, content={"ok": True})
+
+    if msg_type != "text":
+        return JSONResponse(status_code=200, content={"ok": True})
+
+    content = value.get("content") or {}
+    text = (content.get("text") or "").strip()
+    if not text:
+        return JSONResponse(status_code=200, content={"ok": True})
+
+    author_id = str(value.get("author_id") or "")
+    our_user_id = str(value.get("user_id") or "")
+    direction = "out" if (author_id and author_id == our_user_id) else "in"
+
+    created_ts = value.get("created")
+    created_at = (
+        _dt.utcfromtimestamp(created_ts).strftime("%Y-%m-%d %H:%M:%S")
+        if created_ts else None
+    )
+
+    lead = database.get_lead_by_avito_chat_id(chat_id)
+    is_new_lead = lead is None
+    if is_new_lead:
+        lead_id = database.create_avito_lead(avito_chat_id=chat_id)
+        log.info("New Avito lead created: lead_id=%s, chat_id=%s", lead_id, chat_id)
+    else:
+        lead_id = lead["id"]
+
+    database.create_avito_message(lead_id, text, direction, created_at, msg_id)
+
+    if is_new_lead:
+        background_tasks.add_task(_load_avito_chat_history, lead_id, chat_id)
+
+    return JSONResponse(status_code=200, content={"ok": True})
+
+
+@app.post("/api/leads/{lead_id}/send-avito")
+def send_to_avito(lead_id: int, body: AvitoSendMessage):
+    """Отправить сообщение в Авито Мессенджер и сохранить в CRM."""
+    lead = database.get_lead_by_id(lead_id)
+    if lead is None:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    avito_chat_id = (lead.get("avito_chat_id") or "").strip()
+    if not avito_chat_id:
+        raise HTTPException(status_code=400, detail="Этот лид не привязан к чату Авито")
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Текст сообщения не может быть пустым")
+    try:
+        client = _get_avito_client()
+        resp = client.send_message(avito_chat_id, text)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logging.getLogger("backend.main").exception("send_to_avito lead %s: %s", lead_id, e)
+        raise HTTPException(status_code=502, detail=str(e))
+
+    avito_msg_id = str(resp.get("id") or "").strip()
+    created_ts = resp.get("created")
+    created_at = (
+        _dt.utcfromtimestamp(created_ts).strftime("%Y-%m-%d %H:%M:%S")
+        if created_ts else None
+    )
+    if avito_msg_id:
+        msg_id = database.create_avito_message(lead_id, text, "out", created_at, avito_msg_id)
+    else:
+        msg_id = database.create_message(lead_id, MessageCreate(text=text, direction="out", source="Авито"))
+    return database.get_message_by_id(msg_id) if msg_id else {"ok": True}
+
+
+@app.post("/api/leads/{lead_id}/avito-seen")
+def avito_seen(lead_id: int):
+    """Сбросить флаг avito_new_chat при открытии карточки лида."""
+    if database.get_lead_by_id(lead_id) is None:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    database.set_lead_avito_new_chat(lead_id, False)
+    return {"ok": True}
+
+
+@app.post("/api/avito/register-webhook")
+def avito_register_webhook(body: AvitoRegisterWebhook):
+    """Зарегистрировать webhook URL в Авито Мессенджер."""
+    try:
+        client = _get_avito_client()
+        result = client.register_webhook(body.url)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logging.getLogger("backend.main").exception("Avito register webhook: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 # Статика фронтенда по корневому пути (подключать после /api)

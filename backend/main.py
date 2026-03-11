@@ -456,45 +456,30 @@ def _load_avito_chat_history(lead_id: int, chat_id: str) -> None:
         log.exception("Load avito chat history for lead %s, chat %s: %s", lead_id, chat_id, e)
 
 
-@app.post("/api/avito/webhook")
-async def avito_webhook(request: Request, background_tasks: BackgroundTasks):
-    """Принимает webhook-уведомления от Авито Мессенджер."""
+def _process_avito_webhook_payload(body: dict) -> None:
+    """Обработка payload webhook Авито (вызывается в фоне после ответа 200)."""
     log = logging.getLogger("backend.main")
-    try:
-        body = await request.json()
-    except Exception:
-        return JSONResponse(status_code=200, content={"ok": True})
-
     payload = body.get("payload") or {}
     if payload.get("type") != "message":
-        return JSONResponse(status_code=200, content={"ok": True})
-
+        return
     value = payload.get("value") or {}
     chat_id = (value.get("chat_id") or "").strip()
     msg_id = str(value.get("id") or "").strip()
     msg_type = (value.get("type") or "").strip()
-
-    if not chat_id or not msg_id:
-        return JSONResponse(status_code=200, content={"ok": True})
-
-    if msg_type != "text":
-        return JSONResponse(status_code=200, content={"ok": True})
-
+    if not chat_id or not msg_id or msg_type != "text":
+        return
     content = value.get("content") or {}
     text = (content.get("text") or "").strip()
     if not text:
-        return JSONResponse(status_code=200, content={"ok": True})
-
+        return
     author_id = str(value.get("author_id") or "")
     our_user_id = str(value.get("user_id") or "")
     direction = "out" if (author_id and author_id == our_user_id) else "in"
-
     created_ts = value.get("created")
     created_at = (
         _dt.utcfromtimestamp(created_ts).strftime("%Y-%m-%d %H:%M:%S")
         if created_ts else None
     )
-
     lead = database.get_lead_by_avito_chat_id(chat_id)
     is_new_lead = lead is None
     if is_new_lead:
@@ -502,12 +487,27 @@ async def avito_webhook(request: Request, background_tasks: BackgroundTasks):
         log.info("New Avito lead created: lead_id=%s, chat_id=%s", lead_id, chat_id)
     else:
         lead_id = lead["id"]
-
     database.create_avito_message(lead_id, text, direction, created_at, msg_id)
-
     if is_new_lead:
-        background_tasks.add_task(_load_avito_chat_history, lead_id, chat_id)
+        _load_avito_chat_history(lead_id, chat_id)
 
+
+@app.post("/api/avito/webhook")
+async def avito_webhook(request: Request, background_tasks: BackgroundTasks):
+    """Принимает webhook-уведомления от Авито Мессенджер. Ответ 200 — в течение 2 с (требование Авито)."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(status_code=200, content={"ok": True})
+    payload = body.get("payload") or {}
+    value = (payload.get("value") or {})
+    chat_id = (value.get("chat_id") or "").strip()
+    msg_id = str(value.get("id") or "").strip()
+    msg_type = (value.get("type") or "").strip()
+    if payload.get("type") == "message" and chat_id and msg_id and msg_type == "text":
+        content = value.get("content") or {}
+        if (content.get("text") or "").strip():
+            background_tasks.add_task(_process_avito_webhook_payload, body)
     return JSONResponse(status_code=200, content={"ok": True})
 
 

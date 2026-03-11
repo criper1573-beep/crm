@@ -460,9 +460,27 @@ def _load_avito_chat_history(lead_id: int, chat_id: str) -> None:
 async def avito_webhook(request: Request, background_tasks: BackgroundTasks):
     """Принимает webhook-уведомления от Авито Мессенджер."""
     log = logging.getLogger("backend.main")
+    # #region agent log
+    import time as _t
+    _dbg_path = PROJECT_ROOT / "debug-8d7168.log"
+    try:
+        _raw = await request.body()
+        with open(_dbg_path, "a", encoding="utf-8") as _f:
+            import json as _jj
+            _f.write(_jj.dumps({"sessionId": "8d7168", "location": "main.py:avito_webhook", "message": "webhook hit", "data": {"method": request.method, "raw_body": _raw.decode("utf-8", errors="replace")[:500], "headers": dict(request.headers)}, "hypothesisId": "H1-H3", "timestamp": int(_t.time() * 1000)}) + "\n")
+    except Exception as _le:
+        pass
+    # #endregion
     try:
         body = await request.json()
     except Exception:
+        # #region agent log
+        try:
+            with open(_dbg_path, "a", encoding="utf-8") as _f:
+                _f.write(_jj.dumps({"sessionId": "8d7168", "location": "main.py:avito_webhook_parse_error", "message": "json parse failed, returning 200", "data": {}, "hypothesisId": "H3", "timestamp": int(_t.time() * 1000)}) + "\n")
+        except Exception:
+            pass
+        # #endregion
         return JSONResponse(status_code=200, content={"ok": True})
 
     payload = body.get("payload") or {}
@@ -504,6 +522,15 @@ async def avito_webhook(request: Request, background_tasks: BackgroundTasks):
         lead_id = lead["id"]
 
     database.create_avito_message(lead_id, text, direction, created_at, msg_id)
+
+    # #region agent log
+    try:
+        with open(_dbg_path, "a", encoding="utf-8") as _f:
+            import json as _jj2
+            _f.write(_jj2.dumps({"sessionId": "8d7168", "location": "main.py:avito_webhook_processed", "message": "message processed", "data": {"chat_id": chat_id, "msg_id": msg_id, "direction": direction, "is_new_lead": is_new_lead, "lead_id": lead_id}, "hypothesisId": "H4", "timestamp": int(_t.time() * 1000)}) + "\n")
+    except Exception:
+        pass
+    # #endregion
 
     if is_new_lead:
         background_tasks.add_task(_load_avito_chat_history, lead_id, chat_id)

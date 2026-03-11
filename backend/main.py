@@ -593,7 +593,7 @@ def avito_diagnostic():
         self_data = client.get_self()
         uid = self_data.get("id")
         name = self_data.get("name", "")
-        steps.append({"step": 2, "name": "account", "ok": True, "user_id": uid, "name": name})
+        steps.append({"step": 2, "name": "account", "ok": True, "user_id": uid, "account_name": name})
     except Exception as e:
         steps.append({"step": 2, "name": "account", "ok": False, "detail": str(e)})
         return JSONResponse(content={"steps": steps, "summary": "fail at account"})

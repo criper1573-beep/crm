@@ -3,68 +3,75 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0a0a0a">
 <title>FLOW CRM</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
-<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@300;400;600;700&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/style.css?v=scrollbar6">
-<script src="js/config.js"></script>
-<script src="js/api.js"></script>
-<script src="js/app.js"></script>
+<link rel="stylesheet" href="css/fonts.css?v=flow1">
+<link rel="stylesheet" href="css/style.css?v=flow1">
+<script src="js/config.js?v=flow1"></script>
+<script src="js/api.js?v=flow1"></script>
+<script src="js/app.js?v=flow1"></script>
 </head>
 <body>
 
-<!-- HEADER -->
 <header>
-  <div class="logo">FLOW<span>·</span>CRM</div>
-  <button type="button" class="header-btn-mobile header-btn-mobile-left" id="btnMobileSidebar" onclick="toggleMobilePanel('sidebar')" aria-label="Лиды">≡ Лиды</button>
-  <button type="button" class="header-btn-mobile header-btn-mobile-right" id="btnMobileRpanel" onclick="toggleMobilePanel('rpanel')" aria-label="Аналитика">▣ Аналитика</button>
-  <div class="hstat header-hstat-avito"><div class="dot dot-live"></div>Авито синхронизирован</div>
+  <div class="brand">
+    <div class="logo" aria-label="FLOW">FL<span class="logo-o">O</span>W</div>
+    <div class="logo-crm">CRM</div>
+  </div>
+  <button type="button" class="nav-burger" id="btnNavBurger" aria-label="Меню" aria-expanded="false" aria-controls="navMenu" onclick="toggleNavMenu()">
+    <span></span><span></span><span></span>
+  </button>
+  <nav class="nav-menu" id="navMenu" aria-label="Разделы">
+    <button type="button" class="nav-menu-btn" id="btnMobileSidebar" onclick="toggleMobilePanel('sidebar')">Лиды</button>
+    <button type="button" class="nav-menu-btn" id="btnMobileRpanel" onclick="toggleMobilePanel('rpanel')">Аналитика</button>
+  </nav>
+  <div class="hstat header-hstat-avito"><span class="dot dot-live" aria-hidden="true"></span>Авито синхронизирован</div>
   <div class="header-stats">
-    <div class="hstat"><div class="dot dot-hot"></div>Горячих: <b id="cntHot">0</b></div>
-    <div class="hstat"><div class="dot dot-ok"></div>Клиентов: <b id="cntClient">0</b></div>
+    <div class="hstat"><span class="dot dot-hot" aria-hidden="true"></span>Горячих: <b id="cntHot">0</b></div>
+    <div class="hstat"><span class="dot dot-ok" aria-hidden="true"></span>Клиентов: <b id="cntClient">0</b></div>
     <div class="hstat">Всего лидов: <b id="cntAll">0</b></div>
   </div>
 </header>
 
 <div class="main-layout">
 
-  <!-- SIDEBAR -->
   <div class="sidebar">
     <div class="sidebar-actions">
-      <button type="button" class="sidebar-btn sidebar-btn-new" id="btnNewLead" onclick="toggleNewLeadForm()">＋ Новый лид</button>
+      <button type="button" class="sidebar-btn sidebar-btn-new" id="btnNewLead" onclick="toggleNewLeadForm()">Новый лид</button>
       <button type="button" class="sidebar-btn sidebar-btn-import" id="btnImportCsv" onclick="toggleCsvImportModal()">Импорт CSV</button>
     </div>
     <div class="new-lead-form-wrap" id="newLeadFormWrap" style="display:none">
       <div class="new-lead-form">
         <div class="nlf-title">Новый лид</div>
         <form id="newLeadForm" onsubmit="return submitNewLeadForm(event)">
-          <label class="nlf-label">Имя <span class="nlf-req">*</span></label>
-          <input type="text" name="name" class="nlf-input" required placeholder="Имя клиента">
-          <label class="nlf-label">Телефон</label>
-          <input type="text" name="phone" class="nlf-input" placeholder="+7 ...">
-          <label class="nlf-label">Ссылка Авито</label>
-          <input type="text" name="avito_link" class="nlf-input" placeholder="https://...">
-          <label class="nlf-label">Адрес</label>
-          <input type="text" name="address" class="nlf-input" placeholder="Адрес объекта">
-          <label class="nlf-label">Тип объекта</label>
+          <label class="nlf-label" for="newLeadName">Имя <span class="nlf-req">*</span></label>
+          <input type="text" id="newLeadName" name="name" class="nlf-input" required placeholder="Имя клиента">
+          <label class="nlf-label" for="newLeadPhone">Телефон</label>
+          <input type="text" id="newLeadPhone" name="phone" class="nlf-input" placeholder="+7 ...">
+          <label class="nlf-label" for="newLeadAvito">Ссылка Авито</label>
+          <input type="text" id="newLeadAvito" name="avito_link" class="nlf-input" placeholder="https://...">
+          <label class="nlf-label" for="newLeadAddress">Адрес</label>
+          <input type="text" id="newLeadAddress" name="address" class="nlf-input" placeholder="Адрес объекта">
+          <label class="nlf-label" for="newLeadObjectType">Тип объекта</label>
           <select name="object_type" class="nlf-select" id="newLeadObjectType"></select>
-          <label class="nlf-label">Бюджет</label>
+          <label class="nlf-label" for="newLeadBudget">Бюджет</label>
           <select name="budget" class="nlf-select" id="newLeadBudget"></select>
-          <label class="nlf-label">Статус</label>
+          <label class="nlf-label" for="newLeadStatus">Статус</label>
           <select name="status" class="nlf-select" id="newLeadStatus"></select>
-          <label class="nlf-label">Комментарий</label>
-          <textarea name="comment" class="nlf-textarea" placeholder="Комментарий" rows="2"></textarea>
+          <label class="nlf-label" for="newLeadComment">Комментарий</label>
+          <textarea id="newLeadComment" name="comment" class="nlf-textarea" placeholder="Комментарий" rows="2"></textarea>
           <div class="nlf-actions">
-            <button type="submit" class="dbtn primary">Сохранить</button>
             <button type="button" class="dbtn" onclick="cancelNewLeadForm()">Отмена</button>
+            <button type="submit" class="dbtn primary">Сохранить</button>
           </div>
         </form>
       </div>
     </div>
     <div class="sidebar-top">
       <div class="search-box">
-        <span style="font-size:12px;opacity:.4">🔍</span>
-        <input type="text" id="searchInput" placeholder="Имя, адрес, комментарий..." oninput="filterLeads()">
+        <label class="visually-hidden" for="searchInput">Поиск лидов</label>
+        <input type="search" id="searchInput" placeholder="Имя, адрес, комментарий..." oninput="filterLeads()">
       </div>
       <div class="sidebar-funnel">
         <div class="rp-sec">Воронка статусов</div>
@@ -74,14 +81,15 @@
     <div class="leads-list" id="leadsList"></div>
   </div>
 
-  <!-- DETAIL -->
   <div class="detail" id="detail">
-    <div class="empty"><div class="empty-ico">🏗️</div><div>Выберите лида</div></div>
+    <div class="empty">
+      <div class="empty-mark" aria-hidden="true">FL<span>O</span>W</div>
+      <div class="empty-title">Выберите лида</div>
+    </div>
   </div>
 
-  <!-- RIGHT PANEL -->
   <div class="rpanel">
-    <div class="rp-title">АНАЛИТИКА</div>
+    <div class="rp-title">Аналитика</div>
     <div class="rp-scroll">
       <div class="period-switcher" id="periodSwitcher">
         <button type="button" class="period-btn active" data-period="month">Месяц</button>
@@ -92,62 +100,61 @@
       </div>
 
       <div>
-        <div class="rp-sec">ВИДЫ РАБОТ</div>
+        <div class="rp-sec">Виды работ</div>
         <div id="workTypesStats"></div>
       </div>
 
       <div class="div"></div>
 
       <div>
-        <div class="rp-sec">📈 Итоги</div>
+        <div class="rp-sec">Итоги</div>
         <div class="stat-grid">
-          <div class="stat-box"><div class="stat-val" style="color:var(--hot)" id="s1">0</div><div class="stat-lbl">Горячих</div></div>
-          <div class="stat-box"><div class="stat-val" style="color:var(--client)" id="s2">0</div><div class="stat-lbl">Клиентов</div></div>
-          <div class="stat-box"><div class="stat-val" style="color:var(--accent)" id="s3">0</div><div class="stat-lbl">Повторно</div></div>
-          <div class="stat-box"><div class="stat-val" style="color:var(--text2)" id="s4">0</div><div class="stat-lbl">Слив</div></div>
+          <div class="stat-box"><div class="stat-val stat-val-hot" id="s1">0</div><div class="stat-lbl">Горячих</div></div>
+          <div class="stat-box"><div class="stat-val" id="s2">0</div><div class="stat-lbl">Клиентов</div></div>
+          <div class="stat-box"><div class="stat-val" id="s3">0</div><div class="stat-lbl">Повторно</div></div>
+          <div class="stat-box"><div class="stat-val stat-val-muted" id="s4">0</div><div class="stat-lbl">Слив</div></div>
         </div>
         <div class="stat-revenue-block">
           <div class="stat-revenue-label">Выручка</div>
-          <div id="revenueTotal" class="stat-revenue-val">0 ₽</div>
+          <div id="revenueTotal" class="stat-revenue-val">0&nbsp;₽</div>
         </div>
       </div>
 
       <div class="div"></div>
 
       <div>
-        <div class="rp-sec">🔔 Требуют внимания</div>
+        <div class="rp-sec">Требуют внимания</div>
         <div id="alertsList"></div>
       </div>
 
       <div class="div"></div>
 
       <div>
-        <div class="rp-sec">💰 Бюджеты лидов</div>
+        <div class="rp-sec">Бюджеты лидов</div>
         <div id="budgetBars"></div>
       </div>
 
     </div>
   </div>
+
+  <div class="mobile-overlay" id="mobileOverlay" onclick="closeMobilePanels(); closeNavMenu();" aria-hidden="true"></div>
 </div>
 
-<div class="mobile-overlay" id="mobileOverlay" onclick="closeMobilePanels()" aria-hidden="true"></div>
-
-<!-- CSV Import Modal -->
-<div class="csv-import-overlay" id="csvImportOverlay" style="display:none">
-  <div class="csv-import-modal">
-    <div class="csv-import-title">Импорт CSV</div>
+<div class="csv-import-overlay" id="csvImportOverlay" style="display:none" onclick="if(event.target===this)toggleCsvImportModal()">
+  <div class="csv-import-modal" role="dialog" aria-modal="true" aria-labelledby="csvImportTitle">
+    <button type="button" class="csv-import-close" onclick="toggleCsvImportModal()" aria-label="Закрыть">×</button>
+    <div class="csv-import-title" id="csvImportTitle">Импорт CSV</div>
     <div class="csv-import-drop" id="csvImportDrop" ondragover="handleCsvDragOver(event)" ondragleave="handleCsvDragLeave(event)" ondrop="handleCsvDrop(event)">
-      <input type="file" id="csvImportFileInput" accept=".csv" style="display:none" onchange="onCsvFileSelected(event)">
+      <input type="file" id="csvImportFileInput" accept=".csv" onchange="onCsvFileSelected(event)">
       <div class="csv-import-drop-text" id="csvImportDropText">Перетащите .csv файл сюда или нажмите для выбора</div>
     </div>
     <div class="csv-import-preview" id="csvImportPreview" style="display:none">
       <div class="csv-import-preview-count" id="csvImportPreviewCount"></div>
       <div class="csv-import-preview-actions">
-        <button type="button" class="dbtn primary" onclick="doCsvImport()">Импортировать</button>
         <button type="button" class="dbtn" onclick="cancelCsvImport()">Отмена</button>
+        <button type="button" class="dbtn primary" onclick="doCsvImport()">Импортировать</button>
       </div>
     </div>
-    <button type="button" class="csv-import-close" onclick="toggleCsvImportModal()" aria-label="Закрыть">×</button>
   </div>
 </div>
 </body>

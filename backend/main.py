@@ -4,17 +4,40 @@ import logging
 from datetime import datetime as _dt
 from pathlib import Path
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend import database
-from backend.models import Lead, LeadObjectCreate, NoteCreate, MessageCreate, MessageBulkItem, MessageDirectionUpdate, AvitoSendMessage, AvitoRegisterWebhook
+from backend import lead_files
+from backend.auth import configured_users, require_crm_user
+from backend.lead_files import FileTooLarge, InvalidStoredName
+from backend.models import (
+    Lead,
+    LeadFile,
+    LeadObjectCreate,
+    NoteCreate,
+    MessageCreate,
+    MessageBulkItem,
+    MessageDirectionUpdate,
+    AvitoSendMessage,
+    AvitoRegisterWebhook,
+)
 from backend import grs_ai
 from backend import avito
 
-app = FastAPI()
+app = FastAPI(
+    openapi_tags=[
+        {
+            "name": "documents",
+            "description": (
+                "Документы карточки лида: загрузка, список, скачивание и удаление. "
+                "HTTP Basic, пользователи admin и sonya — те же, что у остального /api."
+            ),
+        }
+    ]
+)
 
 # CORS для локального фронтенда
 app.add_middleware(
@@ -83,6 +106,12 @@ def startup():
     logging.getLogger("backend.main").info("CRM started, logs: %s", LOG_FILE)
 
     database.init_db()
+    lead_files.files_dir()
+    if not configured_users():
+        logging.getLogger("backend.main").warning(
+            "Документы лида: задайте CRM_AUTH_ADMIN_PASSWORD и CRM_AUTH_SONYA_PASSWORD в .env "
+            "(те же пароли, что у admin и sonya в nginx). Иначе /api/leads/{id}/files отвечает 401"
+        )
 
 
 @app.get("/api/health")
@@ -194,6 +223,120 @@ def delete_note(note_id: int):
     ok = database.delete_note(note_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Note not found")
+    return {"ok": True}
+
+
+def _public_lead_file(row: dict) -> dict:
+    return {
+        "id": row["id"],
+        "lead_id": row["lead_id"],
+        "original_name": row["original_name"],
+        "size": int(row["size"]),
+        "content_type": row["content_type"],
+        "category": row.get("category") or "",
+        "caption": row.get("caption") or "",
+        "uploaded_by": row.get("uploaded_by") or "",
+        "created_at": row.get("created_at"),
+    }
+
+
+def _clean_file_label(value: str, limit: int, field: str) -> str:
+    text = (value or "").replace("\x00", "").strip()
+    if len(text) > limit:
+        raise HTTPException(status_code=400, detail=f"{field} is too long")
+    return text
+
+
+@app.get("/api/leads/{lead_id}/files", response_model=list[LeadFile], tags=["documents"])
+def list_lead_files(lead_id: int, _user: str = Depends(require_crm_user)):
+    """Список документов лида: имя, размер, тип, дата, кто загрузил, подпись и категория."""
+    if database.get_lead_by_id(lead_id) is None:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    return [_public_lead_file(row) for row in database.get_lead_files(lead_id)]
+
+
+@app.post("/api/leads/{lead_id}/files", response_model=LeadFile, tags=["documents"])
+def upload_lead_file(
+    lead_id: int,
+    file: UploadFile = File(..., description="Файл: проект, счёт, смета, КП, фото, PDF и т.д."),
+    category: str = Form("", description="Необязательная категория"),
+    caption: str = Form("", description="Необязательная подпись"),
+    username: str = Depends(require_crm_user),
+):
+    """Загрузить один файл к лиду (multipart/form-data, поле file). Несколько файлов — несколькими запросами."""
+    if database.get_lead_by_id(lead_id) is None:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    category = _clean_file_label(category, 80, "category")
+    caption = _clean_file_label(caption, 300, "caption")
+    original_name = lead_files.clean_original_name(file.filename)
+    content_type = lead_files.safe_media_type(file.content_type, original_name)
+    try:
+        stored_name, size = lead_files.save_upload(file.file, original_name)
+    except FileTooLarge as exc:
+        raise HTTPException(status_code=413, detail=f"File exceeds size limit of {exc.limit} bytes")
+    try:
+        file_id = database.create_lead_file(
+            lead_id,
+            stored_name,
+            original_name,
+            size,
+            content_type,
+            category,
+            caption,
+            username,
+        )
+    except Exception:
+        lead_files.remove_stored_files([stored_name])
+        raise
+    created = database.get_lead_file(lead_id, file_id)
+    if created is None:
+        lead_files.remove_stored_files([stored_name])
+        raise HTTPException(status_code=500, detail="File was not saved")
+    logging.getLogger("backend.main").info(
+        "lead file uploaded lead_id=%s file_id=%s by=%s size=%s", lead_id, file_id, username, size
+    )
+    return _public_lead_file(created)
+
+
+@app.get("/api/leads/{lead_id}/files/{file_id}", tags=["documents"])
+def download_lead_file(
+    lead_id: int,
+    file_id: int,
+    download: bool = False,
+    _user: str = Depends(require_crm_user),
+):
+    """Отдать байты файла. Имя с кириллицей — в Content-Disposition (filename*). download=1 — скачать, иначе открыть."""
+    row = database.get_lead_file(lead_id, file_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="File not found")
+    try:
+        path = lead_files.resolve_stored_path(row["stored_name"])
+    except InvalidStoredName:
+        raise HTTPException(status_code=404, detail="File not found")
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    media_type, as_attachment = lead_files.serve_disposition(
+        row["content_type"],
+        row["original_name"],
+        force_download=download,
+    )
+    return FileResponse(
+        path,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": lead_files.content_disposition(row["original_name"], attachment=as_attachment),
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@app.delete("/api/leads/{lead_id}/files/{file_id}", tags=["documents"])
+def delete_lead_file(lead_id: int, file_id: int, _user: str = Depends(require_crm_user)):
+    """Удалить документ лида: и запись в базе, и файл на диске."""
+    row = database.delete_lead_file_row(lead_id, file_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="File not found")
+    lead_files.remove_stored_files([row["stored_name"]])
     return {"ok": True}
 
 

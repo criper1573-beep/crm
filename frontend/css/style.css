@@ -694,6 +694,51 @@ input[type="file"] { min-height: 0; }
 }
 .note-delete:hover { color: var(--orange-ink); border-color: var(--orange-ink); }
 
+.docs-block { margin-top: 16px; }
+.docs-toolbar { display: flex; gap: 8px; margin-bottom: 10px; align-items: center; }
+.docs-toolbar select { width: auto; min-width: 160px; flex: 0 0 auto; }
+.docs-upload .dbtn { margin-top: 10px; }
+.docs-status { min-height: 1.2em; font-size: 13px; color: var(--orange-ink); margin: 6px 0; }
+.docs-list { display: flex; flex-direction: column; gap: 8px; }
+.doc-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.doc-kind {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: 6px;
+  border: 1px solid var(--line-strong);
+  background: var(--paper);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  color: var(--ink);
+}
+.doc-kind svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+.doc-kind span { font-size: 9px; font-weight: 700; letter-spacing: 0.04em; line-height: 1; }
+.doc-body { flex: 1; min-width: 0; }
+.doc-name {
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 14px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+}
+.doc-name:hover { color: var(--orange-ink); }
+.doc-meta, .doc-caption { overflow-wrap: anywhere; }
+.doc-meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.doc-caption { font-size: 13px; margin-top: 4px; }
+
 .calls-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; }
 .calls-head .overview-block-title { margin-bottom: 0; }
 
@@ -1126,7 +1171,8 @@ td.num, th.num { text-align: right; white-space: nowrap; }
   .d-actions { margin-left: 0; width: 100%; }
   .d-actions .dbtn, .d-actions a.dbtn { flex: 1 1 auto; }
   .ai-grid { grid-template-columns: 1fr; }
-  .notes-feed-add { flex-direction: column; align-items: stretch; }
+  .notes-feed-add, .docs-toolbar { flex-direction: column; align-items: stretch; }
+  .docs-toolbar select, .docs-toolbar .notes-input { width: 100%; }
   .notes-input { width: 100%; }
   .msg-form-row { flex-direction: column; align-items: stretch; }
   .msg-form-row .dbtn, .msg-form-row .msg-form-select, .msg-form-select { width: 100%; }

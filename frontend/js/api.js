@@ -285,6 +285,50 @@ async function apiAvitoSeen(leadId) {
   }
 }
 
+function leadFileErrorMessage(status, detail) {
+  if (status === 401) return 'Нет доступа: для документов нужна та же авторизация, что и для CRM (admin или sonya).';
+  if (status === 413) return 'Файл больше допустимого размера';
+  if (status === 404) return 'Лид или файл не найден';
+  if (typeof detail === 'string' && detail) return detail;
+  return 'Не удалось выполнить запрос';
+}
+
+function leadFileUrl(leadId, fileId) {
+  return `${BASE}/leads/${leadId}/files/${fileId}`;
+}
+
+async function apiGetLeadFiles(leadId) {
+  try {
+    const res = await fetch(`${BASE}/leads/${leadId}/files`);
+    const body = await res.json().catch(() => null);
+    if (!res.ok) return { ok: false, status: res.status, detail: body && body.detail };
+    return { ok: true, files: body || [] };
+  } catch (e) {
+    console.error('apiGetLeadFiles:', e);
+    return { ok: false, status: 0 };
+  }
+}
+
+async function apiUploadLeadFile(leadId, file, category, caption) {
+  const fd = new FormData();
+  fd.append('file', file, file.name);
+  if (category) fd.append('category', category);
+  if (caption) fd.append('caption', caption);
+  const res = await fetch(`${BASE}/leads/${leadId}/files`, { method: 'POST', body: fd });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(leadFileErrorMessage(res.status, body.detail));
+  return body;
+}
+
+async function apiDeleteLeadFile(leadId, fileId) {
+  const res = await fetch(`${BASE}/leads/${leadId}/files/${fileId}`, { method: 'DELETE' });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(leadFileErrorMessage(res.status, body.detail));
+  }
+  return true;
+}
+
 async function apiRegisterAvitoWebhook(url) {
   try {
     const res = await fetch(`${BASE}/avito/register-webhook`, {

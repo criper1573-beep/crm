@@ -107,6 +107,24 @@ def init_db() -> None:
         msg_cols = [r[1] for r in cur.fetchall()]
         if "avito_message_id" not in msg_cols:
             conn.execute("ALTER TABLE messages ADD COLUMN avito_message_id TEXT")
+        # Документы лида. Только новая таблица: существующие leads/notes/messages не пересоздаются.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS lead_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                lead_id INTEGER NOT NULL,
+                stored_name TEXT NOT NULL,
+                original_name TEXT NOT NULL,
+                size INTEGER NOT NULL,
+                content_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+                category TEXT NOT NULL DEFAULT '',
+                caption TEXT NOT NULL DEFAULT '',
+                uploaded_by TEXT NOT NULL DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_lead_files_lead_id ON lead_files(lead_id)"
+        )
         conn.commit()
 
 
@@ -283,10 +301,82 @@ def update_lead(lead_id: int, lead: Lead) -> bool:
 
 
 def delete_lead(lead_id: int) -> bool:
+    """Удаляет лида и его документы. Файлы на диске снимаются после commit, чтобы не оставить записи без лида."""
+    stored_names: list[str] = []
     with get_connection() as conn:
+        cur = conn.execute("SELECT stored_name FROM lead_files WHERE lead_id = ?", (lead_id,))
+        stored_names = [r["stored_name"] for r in cur.fetchall()]
         cur = conn.execute("DELETE FROM leads WHERE id = ?", (lead_id,))
+        deleted = cur.rowcount > 0
+        if deleted:
+            conn.execute("DELETE FROM lead_files WHERE lead_id = ?", (lead_id,))
         conn.commit()
-        return cur.rowcount > 0
+    if deleted and stored_names:
+        from backend.lead_files import remove_stored_files
+        remove_stored_files(stored_names)
+    return deleted
+
+
+def create_lead_file(
+    lead_id: int,
+    stored_name: str,
+    original_name: str,
+    size: int,
+    content_type: str,
+    category: str,
+    caption: str,
+    uploaded_by: str,
+) -> int:
+    with get_connection() as conn:
+        cur = conn.execute(
+            """INSERT INTO lead_files
+               (lead_id, stored_name, original_name, size, content_type, category, caption, uploaded_by)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (lead_id, stored_name, original_name, size, content_type, category, caption, uploaded_by),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def get_lead_files(lead_id: int) -> list[dict]:
+    with get_connection() as conn:
+        cur = conn.execute(
+            """SELECT id, lead_id, stored_name, original_name, size, content_type,
+                      category, caption, uploaded_by, created_at
+               FROM lead_files WHERE lead_id = ? ORDER BY id DESC""",
+            (lead_id,),
+        )
+        return [_row_to_dict(r) for r in cur.fetchall()]
+
+
+def get_lead_file(lead_id: int, file_id: int) -> dict | None:
+    with get_connection() as conn:
+        cur = conn.execute(
+            """SELECT id, lead_id, stored_name, original_name, size, content_type,
+                      category, caption, uploaded_by, created_at
+               FROM lead_files WHERE id = ? AND lead_id = ?""",
+            (file_id, lead_id),
+        )
+        row = cur.fetchone()
+        return _row_to_dict(row) if row else None
+
+
+def delete_lead_file_row(lead_id: int, file_id: int) -> dict | None:
+    """Удаляет строку метаданных и возвращает её. Файл на диске снимает вызывающий код."""
+    with get_connection() as conn:
+        cur = conn.execute(
+            """SELECT id, lead_id, stored_name, original_name, size, content_type,
+                      category, caption, uploaded_by, created_at
+               FROM lead_files WHERE id = ? AND lead_id = ?""",
+            (file_id, lead_id),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        data = _row_to_dict(row)
+        conn.execute("DELETE FROM lead_files WHERE id = ? AND lead_id = ?", (file_id, lead_id))
+        conn.commit()
+        return data
 
 
 def get_objects_by_lead_id(lead_id: int) -> list[dict]:

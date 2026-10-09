@@ -1131,6 +1131,7 @@ async function updateLeadField(leadId, field, value) {
 }
 
 async function loadNotesIntoFeed(leadId, objectId = null) {
+  loadLeadFiles(leadId);
   loadLastContactFromMessages(leadId, objectId);
   const suffix = objectId != null ? objectId : 'l';
   initDescriptionBlur(leadId, objectId);
@@ -1180,6 +1181,158 @@ async function deleteNote(noteId, leadId, objectId = null) {
   const ok = await apiDeleteNote(noteId);
   if (!ok) return;
   loadNotesIntoFeed(leadId, objectId);
+}
+
+const DOC_CATEGORIES = ['', 'Проект', 'Счёт', 'Смета', 'КП', 'Фото', 'PDF', 'Другое'];
+
+function fileTypeKind(name, contentType) {
+  const t = (contentType || '').toLowerCase();
+  const n = (name || '').toLowerCase();
+  if (t.startsWith('image/') || /\.(png|jpe?g|gif|webp|heic|bmp)$/.test(n)) return 'image';
+  if (t === 'application/pdf' || n.endsWith('.pdf')) return 'pdf';
+  if (/\.(xls|xlsx|csv|ods)$/.test(n) || t.includes('spreadsheet') || t.includes('excel')) return 'sheet';
+  if (/\.(doc|docx|odt|rtf|txt)$/.test(n) || t.includes('word') || t.startsWith('text/')) return 'doc';
+  if (/\.(zip|rar|7z|tar|gz)$/.test(n)) return 'archive';
+  return 'file';
+}
+
+function fileTypeMark(name, contentType) {
+  const kind = fileTypeKind(name, contentType);
+  const label = { image: 'IMG', pdf: 'PDF', sheet: 'XLS', doc: 'DOC', archive: 'ZIP', file: 'FILE' }[kind] || 'FILE';
+  return `<span class="doc-kind doc-kind-${kind}" title="${label}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.5h7.2L19 8.2V20.5H7z"></path><path d="M14 3.5V8.2H19"></path></svg><span>${label}</span></span>`;
+}
+
+function formatFileSize(bytes) {
+  const n = Number(bytes);
+  if (!isFinite(n) || n < 0) return '—';
+  if (n < 1024) return n + ' Б';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(n < 10240 ? 1 : 0) + ' КБ';
+  return (n / (1024 * 1024)).toFixed(1) + ' МБ';
+}
+
+function renderDocumentsBlock(leadId) {
+  const options = DOC_CATEGORIES.map(function (cat) {
+    const label = cat || 'Без категории';
+    return `<option value="${escapeHtml(cat)}">${escapeHtml(label)}</option>`;
+  }).join('');
+  return `
+    <div class="docs-block" id="docsBlock-${leadId}">
+      <div class="notes-feed-title">Документы</div>
+      <div class="docs-toolbar">
+        <select id="docCategory-${leadId}" aria-label="Категория документа">${options}</select>
+        <input type="text" id="docCaption-${leadId}" class="notes-input" maxlength="300" placeholder="Подпись (необязательно)">
+      </div>
+      <div class="upload-zone docs-upload" id="docDrop-${leadId}"
+           onclick="document.getElementById('docInput-${leadId}').click()"
+           ondragover="onLeadDocDragOver(event)"
+           ondragleave="onLeadDocDragLeave(event)"
+           ondrop="onLeadDocDrop(event, ${leadId})">
+        <input type="file" id="docInput-${leadId}" multiple onchange="onLeadDocInput(event, ${leadId})">
+        <div class="uz-text"><b>Перетащите файлы сюда</b><br>или выберите несколько сразу: проекты, счета, сметы, КП, фото, PDF</div>
+        <button type="button" class="dbtn primary" onclick="event.stopPropagation(); document.getElementById('docInput-${leadId}').click()">Загрузить файлы</button>
+      </div>
+      <div class="docs-status" id="docsStatus-${leadId}" role="status"></div>
+      <div id="docsList-${leadId}" class="docs-list">Загрузка...</div>
+    </div>
+  `;
+}
+
+function onLeadDocDragOver(event) {
+  event.preventDefault();
+  if (event.currentTarget) event.currentTarget.classList.add('drag');
+}
+
+function onLeadDocDragLeave(event) {
+  if (event.currentTarget) event.currentTarget.classList.remove('drag');
+}
+
+function onLeadDocDrop(event, leadId) {
+  event.preventDefault();
+  if (event.currentTarget) event.currentTarget.classList.remove('drag');
+  const files = event.dataTransfer && event.dataTransfer.files;
+  if (files && files.length) uploadLeadDocuments(leadId, files);
+}
+
+function onLeadDocInput(event, leadId) {
+  const files = event.target && event.target.files;
+  if (files && files.length) uploadLeadDocuments(leadId, files);
+}
+
+function renderLeadFileRow(leadId, file) {
+  const href = leadFileUrl(leadId, file.id);
+  const meta = [
+    formatNoteDate(file.created_at),
+    formatFileSize(file.size),
+    file.uploaded_by ? ('загрузил ' + file.uploaded_by) : '',
+    file.category || '',
+  ].filter(Boolean).map(escapeHtml).join(' · ');
+  const caption = file.caption ? `<div class="doc-caption">${escapeHtml(file.caption)}</div>` : '';
+  return `<div class="doc-item">
+    ${fileTypeMark(file.original_name, file.content_type)}
+    <div class="doc-body">
+      <a class="doc-name" href="${href}" target="_blank" rel="noopener" title="Открыть в новой вкладке">${escapeHtml(file.original_name || 'файл')}</a>
+      <div class="doc-meta">${meta}</div>
+      ${caption}
+    </div>
+    <button type="button" class="note-delete" data-doc-delete="${file.id}" data-doc-name="${escapeHtml(file.original_name || 'файл')}" title="Удалить" aria-label="Удалить документ">×</button>
+  </div>`;
+}
+
+async function loadLeadFiles(leadId) {
+  if (!document.getElementById('docsList-' + leadId)) return;
+  const result = await apiGetLeadFiles(leadId);
+  const el = document.getElementById('docsList-' + leadId);
+  if (!el) return;
+  if (!result || !result.ok) {
+    el.innerHTML = '<div class="notes-empty">' + escapeHtml(leadFileErrorMessage(result && result.status, result && result.detail)) + '</div>';
+    return;
+  }
+  const files = result.files || [];
+  if (!files.length) {
+    el.innerHTML = '<div class="notes-empty">Нет документов</div>';
+    return;
+  }
+  el.innerHTML = files.map(function (file) { return renderLeadFileRow(leadId, file); }).join('');
+  el.querySelectorAll('[data-doc-delete]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      deleteLeadFile(leadId, parseInt(btn.getAttribute('data-doc-delete'), 10), btn.getAttribute('data-doc-name') || 'файл');
+    });
+  });
+}
+
+async function uploadLeadDocuments(leadId, fileList) {
+  const status = document.getElementById('docsStatus-' + leadId);
+  const input = document.getElementById('docInput-' + leadId);
+  const category = (document.getElementById('docCategory-' + leadId) || {}).value || '';
+  const captionEl = document.getElementById('docCaption-' + leadId);
+  const caption = captionEl ? captionEl.value.trim() : '';
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  if (status) status.textContent = 'Загрузка…';
+  const errors = [];
+  for (let i = 0; i < files.length; i++) {
+    try {
+      await apiUploadLeadFile(leadId, files[i], category, caption);
+    } catch (e) {
+      errors.push((files[i].name || 'файл') + ': ' + (e.message || 'ошибка'));
+    }
+  }
+  if (input) input.value = '';
+  await loadLeadFiles(leadId);
+  if (status) status.textContent = errors.length ? errors.join('; ') : '';
+}
+
+async function deleteLeadFile(leadId, fileId, name) {
+  if (!fileId) return;
+  if (!confirm('Удалить документ «' + (name || 'файл') + '»?')) return;
+  const status = document.getElementById('docsStatus-' + leadId);
+  try {
+    await apiDeleteLeadFile(leadId, fileId);
+    if (status) status.textContent = '';
+    await loadLeadFiles(leadId);
+  } catch (e) {
+    if (status) status.textContent = e.message || 'Не удалось удалить документ';
+  }
 }
 
 function renderTab(l) {
@@ -1301,6 +1454,8 @@ function renderOverview(l) {
       </div>
       <div id="notesList-${leadId}-${objectId || 'l'}" class="notes-list">Загрузка...</div>
     </div>
+
+    ${renderDocumentsBlock(leadId)}
 
     <div>
       <div class="calls-head">

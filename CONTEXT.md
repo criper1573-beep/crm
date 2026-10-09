@@ -10,8 +10,11 @@
 - backend/main.py     — FastAPI роуты
 - backend/database.py — работа с SQLite
 - backend/models.py   — модель лида
+- backend/lead_files.py — файлы документов на диске
+- backend/auth.py     — HTTP Basic для документов (admin, sonya)
 - frontend/           — весь фронтенд
 - data/context.txt    — контекст бизнеса для AI-функций
+- data/files/         — документы лидов (не в git; путь можно сменить через CRM_FILES_DIR)
 
 ## Что сделано
 - [x] Структура проекта
@@ -29,6 +32,22 @@
 - [x] HTTP Basic Auth через nginx
 - [x] Автодеплой через GitHub webhook
 - [x] Автобекап базы (cron)
+- [x] Документы в карточке лида (проекты, счета, сметы, КП, фото, PDF)
+
+## Документы лида
+
+Файлы лежат на диске, метаданные — в таблице `lead_files` (создаётся через `CREATE TABLE IF NOT EXISTS`, существующие таблицы не пересоздаются). Имя на диске — uuid, исходное имя — в базе. Удаление лида удаляет и его файлы.
+
+Авторизация эндпоинтов — HTTP Basic, пользователи `admin` и `sonya` (пароли `CRM_AUTH_ADMIN_PASSWORD` и `CRM_AUTH_SONYA_PASSWORD` в `.env`, те же, что в nginx). Схема есть в `/openapi.json`.
+
+- `GET /api/leads/{id}/files` — список: имя, размер, тип, дата, кто загрузил, категория, подпись
+- `POST /api/leads/{id}/files` — multipart, поле `file`, необязательные поля `category` и `caption`
+- `GET /api/leads/{id}/files/{file_id}` — скачать или открыть; кириллица в `Content-Disposition` (`filename*`). `?download=1` — как вложение
+- `DELETE /api/leads/{id}/files/{file_id}` — удалить файл
+
+Лимит размера: `CRM_MAX_UPLOAD_BYTES` (по умолчанию 50 МБ). Каталог: `CRM_FILES_DIR` (по умолчанию `data/files` рядом с `data/crm.db`).
+
+Бэкап: вместе с `data/crm.db` копировать каталог файлов. Иначе после восстановления базы документы не откроются.
 
 ## В процессе — Этап 4 (Интеграции)
 - [ ] Телеграм (Telethon) — чтение чатов + отправка сообщений из CRM

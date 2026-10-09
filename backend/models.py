@@ -102,3 +102,15 @@ class MessageBulkItem(BaseModel):
 
 class MessageDirectionUpdate(BaseModel):
     direction: str = Field(..., description="in / out")
+
+
+class LeadFile(BaseModel):
+    id: int = Field(..., description="Идентификатор файла")
+    lead_id: int = Field(..., description="Лид, к которому прикреплён файл")
+    original_name: str = Field(..., description="Исходное имя файла, как его загрузили")
+    size: int = Field(..., description="Размер в байтах")
+    content_type: str = Field(..., description="MIME-тип")
+    category: str = Field(default="", description="Необязательная категория: проект, счёт, смета, КП, фото и т.д.")
+    caption: str = Field(default="", description="Необязательная подпись")
+    uploaded_by: str = Field(default="", description="Кто загрузил: admin или sonya")
+    created_at: str | None = Field(default=None, description="Дата загрузки, UTC")

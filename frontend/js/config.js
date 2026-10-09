@@ -7,15 +7,15 @@ const CONFIG = {
   },
 
   statuses: {
-    lead:        { label: 'Лид',               color: '#7a7a9a', bg: 'rgba(122,122,154,0.12)' },
-    mql:         { label: 'MQL',               color: '#7c5cfc', bg: 'rgba(124,92,252,0.12)'  },
-    sql:         { label: 'SQL',               color: '#f5a623', bg: 'rgba(245,166,35,0.12)'  },
-    hot:         { label: 'Горячий лид',       color: '#ff4d6d', bg: 'rgba(255,77,109,0.12)'  },
-    client:      { label: 'Клиент',            color: '#00d68f', bg: 'rgba(0,214,143,0.12)'   },
-    repeat:      { label: 'Повторный клиент',  color: '#00e5ff', bg: 'rgba(0,229,255,0.10)'   },
-    drain_mql:   { label: 'Слив MQL',          color: '#c0392b', bg: 'rgba(192,57,43,0.12)'   },
-    drain_sql:   { label: 'Слив SQL',          color: '#e74c3c', bg: 'rgba(231,76,60,0.12)'   },
-    drain_hot:   { label: 'Слив горячий лид',  color: '#ff6b35', bg: 'rgba(255,107,53,0.12)'  },
+    lead:        { label: 'Лид',               color: '#5c5c5c', bg: '#e7e2d8' },
+    mql:         { label: 'MQL',               color: '#0a0a0a', bg: '#f0ede6' },
+    sql:         { label: 'SQL',               color: '#b02a00', bg: '#fff4f0' },
+    hot:         { label: 'Горячий лид',       color: '#b02a00', bg: '#fff4f0' },
+    client:      { label: 'Клиент',            color: '#0a0a0a', bg: '#f0ede6' },
+    repeat:      { label: 'Повторный клиент',  color: '#0a0a0a', bg: '#ffffff' },
+    drain_mql:   { label: 'Слив MQL',          color: '#5c5c5c', bg: '#e7e2d8' },
+    drain_sql:   { label: 'Слив SQL',          color: '#5c5c5c', bg: '#e7e2d8' },
+    drain_hot:   { label: 'Слив горячий лид',  color: '#b02a00', bg: '#fff4f0' },
   },
 
   budgets: {

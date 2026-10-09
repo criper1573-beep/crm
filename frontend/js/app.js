@@ -434,7 +434,7 @@ async function deleteLead(id) {
   if (activeId === id) {
     activeId = null;
     document.getElementById('detail').innerHTML = `
-      <div class="empty"><div class="empty-ico">🏗️</div><div>Выберите лида</div></div>
+      <div class="empty"><div class="empty-mark" aria-hidden="true">FL<span>O</span>W</div><div class="empty-title">Выберите лида</div></div>
     `;
   }
 }
@@ -530,11 +530,11 @@ function setPeriod(periodKey) {
 
 // ─── STATUS CONFIG ──────────────────────────────────────────
 const funnelConfig = [
-  { key:'hot',    label:'🔥 Горячий лид',  color:'var(--hot)' },
-  { key:'client', label:'✅ Клиент',        color:'var(--client)' },
-  { key:'repeat', label:'🔄 Повторно',      color:'var(--repeat)' },
-  { key:'sql',    label:'📋 SQL',           color:'var(--warn)' },
-  { key:'drain',  label:'📉 Слив',          color:'var(--muted)' },
+  { key:'hot',    label:'Горячий лид', color:'var(--hot)' },
+  { key:'client', label:'Клиент',       color:'var(--client)' },
+  { key:'repeat', label:'Повторно',     color:'var(--repeat)' },
+  { key:'sql',    label:'SQL',          color:'var(--warn)' },
+  { key:'drain',  label:'Слив',         color:'var(--muted)' },
 ];
 
 function getStatusGroup(s) {
@@ -544,6 +544,17 @@ function getStatusGroup(s) {
 }
 
 function getStatusInfo(s) {
+  const cfg = (typeof CONFIG !== 'undefined' && CONFIG.statuses) ? CONFIG.statuses[s] : null;
+  if (cfg) {
+    const group = getStatusGroup(s);
+    return {
+      label: cfg.label,
+      cls: 'sbadge-' + s,
+      side: group === 'drain' ? 's-drain' : ('s-' + s),
+      color: cfg.color,
+      fKey: s,
+    };
+  }
   return STATUS[s] || STATUS['drain_g'];
 }
 
@@ -568,7 +579,7 @@ function updateStats() {
     return sum + v;
   }, 0);
   const revenueEl = document.getElementById('revenueTotal');
-  if (revenueEl) revenueEl.textContent = formatDealAmount(revenue) || '0 ₽';
+  if (revenueEl) revenueEl.textContent = formatDealAmount(revenue) || ('0\u00A0₽');
 
   // funnel in sidebar: counts by selected period (same as analytics)
   const sfl = document.getElementById('sidebarFunnelList');
@@ -576,26 +587,25 @@ function updateStats() {
     const total = leadsForPeriod.length;
     const pctAll = total ? 100 : 0;
     const activeAll = currentFilter === 'all';
-    let html = `<div class="funnel-item ${activeAll ? 'active' : ''}" onclick="setFilter('all')">
-      <div class="fi-dot" style="background:var(--accent)"></div>
-      <div class="fi-label">Все</div>
-      <div class="fi-count">${total}</div>
-      <div class="fi-pct" style="color:var(--accent)">${pctAll}%</div>
-    </div>`;
+    let html = `<button type="button" class="funnel-item ${activeAll ? 'active' : ''}" onclick="setFilter('all')">
+      <span class="fi-dot sdot-all" aria-hidden="true"></span>
+      <span class="fi-label">Все</span>
+      <span class="fi-count">${total}</span>
+      <span class="fi-pct">${pctAll}\u00A0%</span>
+    </button>`;
     if (CONFIG.statuses) {
       funnelOrder.filter(k => k !== 'all').forEach(key => {
         const cfg = CONFIG.statuses[key];
         if (!cfg) return;
         const cnt = leadsForPeriod.filter(l => l.status === key).length;
         const pct = total ? Math.round(cnt / total * 100) : 0;
-        const color = (cfg && cfg.color) || 'var(--text2)';
         const isActive = currentFilter === key;
-        html += `<div class="funnel-item ${isActive ? 'active' : ''}" onclick="setFilter('${escapeHtml(key)}')">
-          <div class="fi-dot" style="background:${color}"></div>
-          <div class="fi-label">${escapeHtml(cfg.label)}</div>
-          <div class="fi-count">${cnt}</div>
-          <div class="fi-pct" style="color:${color}">${pct}%</div>
-        </div>`;
+        html += `<button type="button" class="funnel-item ${isActive ? 'active' : ''}" onclick="setFilter('${escapeHtml(key)}')">
+          <span class="fi-dot sdot-${escapeHtml(key)}" aria-hidden="true"></span>
+          <span class="fi-label">${escapeHtml(cfg.label)}</span>
+          <span class="fi-count">${cnt}</span>
+          <span class="fi-pct">${pct}\u00A0%</span>
+        </button>`;
       });
     }
     sfl.innerHTML = html;
@@ -608,9 +618,9 @@ function updateStats() {
       const cnt = leadsForPeriod.filter(l => Array.isArray(l.work_types) && l.work_types.includes(wt)).length;
       const pct = total ? Math.round(cnt / total * 100) : 0;
       return `<div class="work-type-stat-row">
-        <div style="display:flex;justify-content:space-between;font-size:9px;margin-bottom:3px">
-          <span style="color:var(--text2)">${escapeHtml(wt)}</span>
-          <span style="color:var(--accent)">${cnt} · ${pct}%</span>
+        <div class="wt-head">
+          <span class="wt-name">${escapeHtml(wt)}</span>
+          <span class="wt-pct">${cnt}\u00A0·\u00A0${pct}\u00A0%</span>
         </div>
         <div class="work-type-stat-bar"><div class="work-type-stat-fill" style="width:${pct}%"></div></div>
       </div>`;
@@ -621,19 +631,17 @@ function updateStats() {
   const budgets = {lo:0,mid:0,hi:0};
   leadsForPeriod.forEach(l => { if(budgets[l.budget]!==undefined) budgets[l.budget]++; });
   document.getElementById('budgetBars').innerHTML = [
-    {k:'hi',label:'> 100к',color:'var(--accent2)'},
-    {k:'mid',label:'30–100к',color:'var(--accent)'},
-    {k:'lo',label:'< 30к',color:'var(--muted)'},
+    {k:'hi',label:'> 100к'},
+    {k:'mid',label:'30–100к'},
+    {k:'lo',label:'< 30к'},
   ].map(b => {
     const pct = leadsForPeriod.length ? Math.round(budgets[b.k]/leadsForPeriod.length*100) : 0;
-    return `<div style="margin-bottom:8px">
-      <div style="display:flex;justify-content:space-between;font-size:9px;margin-bottom:3px">
-        <span style="color:var(--text2)">${b.label}</span>
-        <span style="color:${b.color}">${budgets[b.k]} лидов</span>
+    return `<div class="budget-row">
+      <div class="budget-head">
+        <span class="budget-label">${b.label}</span>
+        <span class="budget-count">${budgets[b.k]} лидов</span>
       </div>
-      <div style="height:4px;background:var(--border);border-radius:2px;overflow:hidden">
-        <div style="height:100%;width:${pct}%;background:${b.color};border-radius:2px;transition:width 1s ease"></div>
-      </div>
+      <div class="budget-track"><div class="budget-fill budget-fill-${b.k}" style="width:${pct}%"></div></div>
     </div>`;
   }).join('');
 
@@ -658,7 +666,7 @@ function updateStats() {
     const cond2 = notDrain && (lastOutMoreThan24h || noMessagesLeadOld);
     return cond1 || cond2;
   }).map(l => {
-    if (l.avito_new_chat) return { ...l, _reason: '📩 Новый чат из Авито' };
+    if (l.avito_new_chat) return { ...l, _reason: 'Новый чат из Авито' };
     const lastDir = (l.last_message_direction || '').toLowerCase();
     const reason = lastDir === 'in' ? 'Клиент написал — нет ответа' : (() => {
       const refDate = lastDir === 'out' ? l.last_message_date : (l.created_at || '');
@@ -672,11 +680,11 @@ function updateStats() {
     alertsEl.innerHTML = alertLeads.length ? alertLeads.map(l => {
       const cfg = CONFIG.statuses && CONFIG.statuses[l.status];
       const color = (cfg && cfg.color) || 'var(--text2)';
-      return `<div class="alert-item" onclick="openLead(${l.id})">
-        <div class="ai-top"><span>${escapeHtml(l.name)}</span><span style="font-size:9px;font-weight:500;color:${color}">${escapeHtml((cfg && cfg.label) || l.status)}</span></div>
-        <div class="ai-sub">${escapeHtml(l._reason)}</div>
-      </div>`;
-    }).join('') : '<div style="font-size:10px;color:var(--muted);text-align:center;padding:10px">Всё обработано 👍</div>';
+      return `<button type="button" class="alert-item" onclick="openLead(${l.id})">
+        <span class="ai-top"><span>${escapeHtml(l.name)}</span><span style="color:${color}">${escapeHtml((cfg && cfg.label) || l.status)}</span></span>
+        <span class="ai-sub">${escapeHtml(l._reason)}</span>
+      </button>`;
+    }).join('') : '<div class="empty-inline">Всё обработано</div>';
   }
 }
 
@@ -692,20 +700,24 @@ function renderList() {
   });
 
   const el = document.getElementById('leadsList');
+  if (!filtered.length) {
+    el.innerHTML = '<div class="empty-inline">Лидов нет</div>';
+    return;
+  }
   el.innerHTML = filtered.map(l => {
     const si = getStatusInfo(l.status);
     const bi = BUDGET[l.budget];
     const hasNewMsg = (l.msgs && l.msgs.length > 0 && !l.msgs[l.msgs.length-1].out);
-    return `<div class="lead-card ${si.side} ${activeId===l.id?'active':''}" id="lc-${l.id}" onclick="openLead(${l.id})">
-      ${hasNewMsg ? '<div style="position:absolute;top:12px;right:12px;width:7px;height:7px;border-radius:50%;background:var(--hot);animation:pulse 1.5s infinite"></div>' : ''}
+    return `<div class="lead-card ${si.side} ${activeId===l.id?'active':''}" id="lc-${l.id}" role="button" tabindex="0" onclick="openLead(${l.id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openLead(${l.id})}">
+      ${hasNewMsg ? '<span class="lc-new" aria-label="Новое сообщение"></span>' : ''}
       <div class="lc-row">
-        <div class="lc-name">${l.name}</div>
-        <div class="lc-date">${formatCreatedDate(getEffectiveLastContactYmd(l)) || l.date || '—'}</div>
+        <div class="lc-name">${escapeHtml(l.name)}</div>
+        <div class="lc-date">${formatCreatedDate(getEffectiveLastContactYmd(l)) || escapeHtml(l.date) || '—'}</div>
       </div>
       <div class="lc-meta">
-        <span class="sbadge ${si.cls}">${si.label}</span>
-        ${bi ? `<span class="btag ${bi.cls}">${bi.label}</span>` : ''}
-        ${l.obj ? `<span class="otag">${l.obj}</span>` : ''}
+        <span class="sbadge ${si.cls}">${escapeHtml(si.label)}</span>
+        ${bi ? `<span class="btag ${bi.cls}">${escapeHtml(bi.label)}</span>` : ''}
+        ${l.obj ? `<span class="otag">${escapeHtml(l.obj)}</span>` : ''}
       </div>
     </div>`;
   }).join('');
@@ -721,7 +733,20 @@ function setFilter(f) {
 function filterLeads() { renderList(); }
 
 // ─── MOBILE PANELS ──────────────────────────────────────────
+function closeNavMenu() {
+  document.body.classList.remove('mobile-nav-open');
+  const btn = document.getElementById('btnNavBurger');
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+function toggleNavMenu() {
+  const open = !document.body.classList.contains('mobile-nav-open');
+  if (open) closeMobilePanels();
+  document.body.classList.toggle('mobile-nav-open', open);
+  const btn = document.getElementById('btnNavBurger');
+  if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
 function toggleMobilePanel(which) {
+  closeNavMenu();
   const body = document.body;
   if (which === 'sidebar') {
     body.classList.toggle('mobile-sidebar-open');
@@ -764,13 +789,13 @@ function renderHeaderView(l) {
     <div class="d-header-center">
       <div class="d-name-wrap" id="dNameWrap-${l.id}"><span class="d-name d-name-editable" data-lead-id="${l.id}" onclick="startEditLeadName(${l.id})" title="Нажмите для редактирования">${escapeHtml(l.name || '')}</span></div>
       <div class="d-sub d-sub-header">
-        ${l.phone ? `<a href="tel:${(l.phone).replace(/[^\d+]/g, '')}" class="d-sub-phone" title="Позвонить">📞 ${escapeHtml(l.phone)}</a>` : ''}
-        <span class="sbadge ${si.cls}">${si.label}</span>
+        ${l.phone ? `<a href="tel:${(l.phone).replace(/[^\d+]/g, '')}" class="d-sub-phone" title="Позвонить">${escapeHtml(l.phone)}</a>` : ''}
+        <span class="sbadge ${si.cls}">${escapeHtml(si.label)}</span>
       </div>
     </div>
     <div class="d-actions">
-      ${l.phone ? `<a href="tel:${(l.phone).replace(/[^\d+]/g, '')}" class="dbtn dbtn-tel" title="Позвонить">📞</a>` : ''}
-      ${(l.avito_link || l.link) ? `<a href="${escapeHtml((l.avito_link || l.link).trim())}" target="_blank" rel="noopener" class="dbtn">🔗 Авито</a>` : ''}
+      ${l.phone ? `<a href="tel:${(l.phone).replace(/[^\d+]/g, '')}" class="dbtn dbtn-tel" title="Позвонить">Позвонить</a>` : ''}
+      ${(l.avito_link || l.link) ? `<a href="${escapeHtml((l.avito_link || l.link).trim())}" target="_blank" rel="noopener" class="dbtn">Авито</a>` : ''}
       ${(() => { const u = (l.max_link || '').trim(); return u && (u.startsWith('http://') || u.startsWith('https://')) ? `<a href="${escapeHtml(u)}" target="_blank" rel="noopener" class="dbtn">МАХ</a>` : ''; })()}
       ${(l.tg_link || '').trim() ? `<a href="${normalizeTgLink(l.tg_link)}" target="_blank" rel="noopener" class="dbtn dbtn-tel">TG</a>` : ''}
       <div class="status-dropdown" id="statusDropdown">
@@ -781,7 +806,7 @@ function renderHeaderView(l) {
       </div>
       <button type="button" class="dbtn" onclick="toggleHeaderEdit()">Редактировать</button>
       <label class="toggle-wrap d-header-toggle" title="У клиента несколько объектов"><input type="checkbox" ${l.has_multiple_objects ? 'checked' : ''} onchange="toggleHasMultipleObjects(${l.id}, this.checked)"><span class="toggle-slider"></span><span class="toggle-label">Несколько объектов</span></label>
-      <button type="button" class="dbtn" onclick="deleteLead(${l.id})" style="color:var(--hot);border-color:rgba(255,77,109,0.5)">Удалить лид</button>
+      <button type="button" class="dbtn danger" onclick="deleteLead(${l.id})">Удалить лид</button>
     </div>`;
 }
 
@@ -798,8 +823,8 @@ function renderHeaderEdit(l) {
       <select id="headerEditStatus" class="d-header-edit-select">${statusOpts}</select>
     </div>
     <div class="d-actions">
-      <button type="button" class="dbtn primary" onclick="saveHeaderEdit(${l.id})">Сохранить</button>
       <button type="button" class="dbtn" onclick="cancelHeaderEdit()">Отмена</button>
+      <button type="button" class="dbtn primary" onclick="saveHeaderEdit(${l.id})">Сохранить</button>
     </div>`;
 }
 
@@ -870,10 +895,10 @@ function renderDetail() {
     <div class="detail-header fade-in" id="detailHeader">
       ${headerHtml}
     </div>
-    <div class="dtabs">
-      <div class="dtab ${activeTab==='overview'?'active':''}" onclick="switchTab('overview')">🗂 Обзор</div>
-      <div class="dtab ${activeTab==='msgs'?'active':''}" onclick="switchTab('msgs')">💬 Переписка</div>
-      <div class="dtab ${activeTab==='calls'?'active':''}" onclick="switchTab('calls')">📞 Звонки (${l.calls.length})</div>
+    <div class="dtabs" role="tablist">
+      <button type="button" class="dtab ${activeTab==='overview'?'active':''}" role="tab" data-tab="overview" aria-selected="${activeTab==='overview'?'true':'false'}" onclick="switchTab('overview')">Обзор</button>
+      <button type="button" class="dtab ${activeTab==='msgs'?'active':''}" role="tab" data-tab="msgs" aria-selected="${activeTab==='msgs'?'true':'false'}" onclick="switchTab('msgs')">Переписка</button>
+      <button type="button" class="dtab ${activeTab==='calls'?'active':''}" role="tab" data-tab="calls" aria-selected="${activeTab==='calls'?'true':'false'}" onclick="switchTab('calls')">Звонки (${l.calls.length})</button>
     </div>
     <div class="tab-body fade-in" id="tabBody">${renderTab(l)}</div>
   `;
@@ -885,11 +910,10 @@ function switchTab(tab) {
   activeTab = tab;
   saveState();
   const l = leads.find(x => x.id === activeId);
-  document.querySelectorAll('.dtab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.dtab').forEach(t => {
-    if((tab==='overview'&&t.textContent.includes('Обзор'))||
-       (tab==='msgs'&&t.textContent.includes('Переписка'))||
-       (tab==='calls'&&t.textContent.includes('Звонки'))) t.classList.add('active');
+    const on = t.dataset.tab === tab;
+    t.classList.toggle('active', on);
+    t.setAttribute('aria-selected', on ? 'true' : 'false');
   });
   const tb = document.getElementById('tabBody');
   tb.innerHTML = renderTab(l);
@@ -1025,7 +1049,8 @@ function formatDealAmount(n) {
   if (n == null || n === '' || isNaN(Number(n))) return '';
   const num = parseInt(String(n).replace(/\D/g, ''), 10);
   if (isNaN(num)) return '';
-  return String(num).replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + ' ₽';
+  const nbsp = '\u00A0';
+  return String(num).replace(/\B(?=(\d{3})+(?!\d))/g, nbsp) + nbsp + '₽';
 }
 
 function filterDealAmountInput(inputEl) {
@@ -1221,7 +1246,7 @@ function renderOverview(l) {
   const showDealAmount = l.status === 'client' || l.status === 'repeat';
   const dealAmountFormatted = formatDealAmount(data.deal_amount);
   const dealAmountRowWithId = showDealAmount
-    ? `<div class="ai-field" id="cardField-${leadId}-${objectId || 'l'}-deal_amount"><div class="aif-label">Сумма сделки</div><input type="text" class="aif-edit-input" value="${escapeHtml(dealAmountFormatted)}" placeholder="Введите сумму сметы" data-lead-id="${leadId}" data-object-id="${objectId || ''}" oninput="filterDealAmountInput(this)" onblur="saveOverviewDealAmountOnBlur(this)"></div>`
+    ? `<div class="ai-field" id="cardField-${leadId}-${objectId || 'l'}-deal_amount"><div class="aif-label">Сумма сделки</div><input type="text" class="aif-edit-input money-input" inputmode="numeric" value="${escapeHtml(dealAmountFormatted)}" placeholder="Введите сумму сметы" data-lead-id="${leadId}" data-object-id="${objectId || ''}" oninput="filterDealAmountInput(this)" onblur="saveOverviewDealAmountOnBlur(this)"></div>`
     : '';
   const objSwitcher = (l.has_multiple_objects && l.objects && l.objects.length) ? `
     <div class="overview-object-switcher">
@@ -1254,13 +1279,13 @@ function renderOverview(l) {
           <label class="toggle-wrap"><input type="checkbox" ${data.communication_done ? 'checked' : ''} onchange="updateOverviewField(${leadId}, null, 'communication_done', this.checked)"><span class="toggle-slider"></span></label>
         </div>
       </div>
-      ${lastMsg ? `<div class="ai-comment" style="margin-top:8px">📩 <b>Последнее сообщение:</b> ${escapeHtml(lastMsg.text)}</div>` : ''}
+      ${lastMsg ? `<div class="ai-comment"><b>Последнее сообщение:</b> ${escapeHtml(lastMsg.text)}</div>` : ''}
     </div>
 
     <div class="overview-block overview-desc-block" id="cardField-${leadId}-${objectId || 'l'}-description">
       <div class="overview-block-title">ОПИСАНИЕ ПРОЕКТА</div>
       <textarea class="overview-description-ta" id="descriptionTa-${leadId}-${objectId || 'l'}" placeholder="Добавьте описание проекта или нажмите Обновить" data-lead-id="${leadId}" data-object-id="${objectId || ''}">${escapeHtml(data.description || '')}</textarea>
-      <button type="button" class="dbtn" id="btnSummarize-${leadId}" style="margin-top:8px;font-size:9px" onclick="requestLeadSummary(${leadId})">↺ Обновить из переписки и заметок</button>
+      <button type="button" class="dbtn" id="btnSummarize-${leadId}" style="margin-top:8px" onclick="requestLeadSummary(${leadId})">Обновить из переписки и заметок</button>
     </div>
 
     <div class="overview-block work-types-block" id="cardField-${leadId}-${objectId || 'l'}-work_types">
@@ -1269,7 +1294,7 @@ function renderOverview(l) {
     </div>
 
     <div class="notes-feed" data-lead-id="${leadId}" data-object-id="${objectId || ''}">
-      <div class="notes-feed-title">📝 Заметки</div>
+      <div class="notes-feed-title">Заметки</div>
       <div class="notes-feed-add">
         <input type="text" id="noteInput-${leadId}-${objectId || 'l'}" class="notes-input" placeholder="Текст заметки..." onkeydown="if(event.key==='Enter')addNoteWithObject(${leadId}, ${objectId || 'null'})">
         <button type="button" class="dbtn primary" onclick="addNoteWithObject(${leadId}, ${objectId || 'null'})">Добавить заметку</button>
@@ -1278,23 +1303,20 @@ function renderOverview(l) {
     </div>
 
     <div>
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-        <div style="font-family:'Unbounded',sans-serif;font-size:11px;font-weight:600">📞 Звонки</div>
-        <button class="dbtn" onclick="switchTab('calls')">Все →</button>
+      <div class="calls-head">
+        <div class="overview-block-title">Звонки</div>
+        <button type="button" class="dbtn" onclick="switchTab('calls')">Все</button>
       </div>
       ${l.calls.length===0
-        ? `<div style="font-size:10px;color:var(--muted);text-align:center;padding:18px;background:var(--surface);border:1px dashed var(--border);border-radius:7px">
-            Записей нет. Загрузите аудио — автотранскрибация за 1-2 мин
-           </div>`
+        ? `<div class="empty-inline">Записей нет. Загрузите аудио — автотранскрибация за 1–2 мин</div>`
         : l.calls.slice(0,1).map(c=>`
           <div class="call-item">
             <div class="ci-top">
-              <span style="font-size:16px">🎙️</span>
-              <div><div style="font-size:11px;font-weight:500">${c.name}</div><div style="font-size:9px;color:var(--muted)">${c.date}</div></div>
-              <div class="ci-dur">⏱ ${c.duration}</div>
+              <div><div class="ci-name">${escapeHtml(c.name)}</div><div class="ci-date">${escapeHtml(c.date)}</div></div>
+              <div class="ci-dur">${escapeHtml(c.duration)}</div>
             </div>
-            <div class="transcription">${c.transcription}</div>
-            <div class="facts">${c.facts.map(f=>`<div class="fact">✦ ${f}</div>`).join('')}</div>
+            <div class="transcription">${escapeHtml(c.transcription)}</div>
+            <div class="facts">${c.facts.map(f=>`<div class="fact">${escapeHtml(f)}</div>`).join('')}</div>
           </div>`).join('')
       }
     </div>
@@ -1395,7 +1417,7 @@ function renderMsgs(l) {
   const hasAvitoChat = !!(l.avito_chat_id);
   const sourcesOpts = (CONFIG.messageSources || MESSAGE_SOURCES).map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
   const avitoSendBtn = hasAvitoChat
-    ? `<button type="button" id="msgAvitoBtn-${leadId}" class="dbtn dbtn-avito" onclick="sendToAvito(${leadId})">📨 Отправить в Авито</button>`
+    ? `<button type="button" id="msgAvitoBtn-${leadId}" class="dbtn dbtn-avito" onclick="sendToAvito(${leadId})">Отправить в Авито</button>`
     : '';
   return `
     <div id="messagesList-${leadId}" class="msg-thread messages-feed">Загрузка...</div>
@@ -1408,7 +1430,7 @@ function renderMsgs(l) {
           <select id="msgSource-write-${leadId}" class="msg-form-select">${sourcesOpts}</select>
           <button type="button" class="dbtn" onclick="sendMessageAs(${leadId}, 'in')">← Входящее</button>
           <button type="button" class="dbtn primary" onclick="sendMessageAs(${leadId}, 'out')">Исходящее →</button>
-          <button type="button" id="msgAiBtn-${leadId}" class="dbtn" onclick="requestAiReply(${leadId})">✦ AI ответ</button>
+          <button type="button" id="msgAiBtn-${leadId}" class="dbtn" onclick="requestAiReply(${leadId})">AI-ответ</button>
           ${avitoSendBtn}
         </div>
       </div>
@@ -1435,9 +1457,9 @@ function renderMsgs(l) {
         </div>
       </div>
       <div class="msg-form-tab-icons">
-        <button type="button" class="msg-form-tab-icon active" data-msg-tab="write" title="Написать">✏️</button>
-        <button type="button" class="msg-form-tab-icon" data-msg-tab="paste" title="Вставить текст">📋</button>
-        <button type="button" class="msg-form-tab-icon" data-msg-tab="telegram" title="Загрузить Телеграм">📁</button>
+        <button type="button" class="msg-form-tab-icon active" data-msg-tab="write">Написать</button>
+        <button type="button" class="msg-form-tab-icon" data-msg-tab="paste">Вставить</button>
+        <button type="button" class="msg-form-tab-icon" data-msg-tab="telegram">Телеграм</button>
       </div>
     </div>
   `;
@@ -1561,7 +1583,7 @@ async function requestAiReply(leadId) {
   } catch (e) {
     alert(e && (e.message || String(e)) || 'Ошибка генерации ответа');
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '✦ AI ответ'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'AI-ответ'; }
   }
 }
 
@@ -1582,7 +1604,7 @@ async function sendToAvito(leadId) {
   } catch (e) {
     alert('Ошибка отправки в Авито: ' + (e && (e.message || String(e))));
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '📨 Отправить в Авито'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Отправить в Авито'; }
   }
 }
 
@@ -1789,21 +1811,19 @@ function renderCalls(l) {
          ondragleave="this.classList.remove('drag')"
          ondrop="handleDrop(event,${l.id})">
       <input type="file" id="fi-${l.id}" accept="audio/*,.mp3,.m4a,.ogg,.wav,.aac" onchange="handleUpload(event,${l.id})">
-      <div class="uz-icon">🎙️</div>
       <div class="uz-text"><b>Нажмите или перетащите</b> запись звонка<br>mp3, m4a, ogg, wav — Whisper транскрибирует за 1–2 мин</div>
     </div>
     <div id="callsContainer-${l.id}">
       ${l.calls.length===0
-        ? `<div style="font-size:10px;color:var(--muted);text-align:center;padding:14px">Записей нет</div>`
+        ? `<div class="empty-inline">Записей нет</div>`
         : l.calls.map(c=>`
           <div class="call-item">
             <div class="ci-top">
-              <span style="font-size:16px">🎙️</span>
-              <div><div style="font-size:11px;font-weight:500">${c.name}</div><div style="font-size:9px;color:var(--muted)">${c.date}</div></div>
-              <div class="ci-dur">⏱ ${c.duration}</div>
+              <div><div class="ci-name">${escapeHtml(c.name)}</div><div class="ci-date">${escapeHtml(c.date)}</div></div>
+              <div class="ci-dur">${escapeHtml(c.duration)}</div>
             </div>
-            <div class="transcription">${c.transcription}</div>
-            <div class="facts">${c.facts.map(f=>`<div class="fact">✦ ${f}</div>`).join('')}</div>
+            <div class="transcription">${escapeHtml(c.transcription)}</div>
+            <div class="facts">${(c.facts || []).map(f=>`<div class="fact">${escapeHtml(f)}</div>`).join('')}</div>
           </div>`).join('')
       }
     </div>
@@ -1818,7 +1838,7 @@ function simulateUpload(id,fname) {
   if(!cont) return;
   const up = document.createElement('div');
   up.className='uploading fade-in';
-  up.innerHTML=`<span style="font-size:18px">🎙️</span><div class="prog-wrap"><div class="prog-label">Транскрибирую «${fname}» через Whisper...</div><div class="prog-bar"><div class="prog-fill"></div></div></div>`;
+  up.innerHTML=`<div class="prog-wrap"><div class="prog-label">Транскрибирую «${escapeHtml(fname)}» через Whisper...</div><div class="prog-bar"><div class="prog-fill"></div></div></div>`;
   cont.prepend(up);
   setTimeout(()=>{
     up.remove();
@@ -1851,6 +1871,16 @@ async function init() {
   document.addEventListener('click', function periodSwitcherClick(e) {
     const btn = e.target.closest('#periodSwitcher .period-btn');
     if (btn) setPeriod(btn.getAttribute('data-period'));
+  });
+  document.addEventListener('keydown', function onEscape(e) {
+    if (e.key !== 'Escape') return;
+    const overlay = document.getElementById('csvImportOverlay');
+    if (overlay && overlay.style.display !== 'none') {
+      toggleCsvImportModal();
+      return;
+    }
+    closeNavMenu();
+    closeMobilePanels();
   });
   loadState();
   const raw = await apiGetLeads();

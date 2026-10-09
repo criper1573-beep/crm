@@ -4,15 +4,18 @@ import logging
 from datetime import datetime as _dt
 from pathlib import Path
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from urllib.parse import quote
+
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend import database
-from backend.models import Lead, LeadObjectCreate, NoteCreate, MessageCreate, MessageBulkItem, MessageDirectionUpdate, AvitoSendMessage, AvitoRegisterWebhook
+from backend.models import Lead, LeadFile, LeadObjectCreate, NoteCreate, MessageCreate, MessageBulkItem, MessageDirectionUpdate, AvitoSendMessage, AvitoRegisterWebhook
 from backend import grs_ai
 from backend import avito
+from backend import files as lead_files
 
 app = FastAPI()
 
@@ -83,6 +86,7 @@ def startup():
     logging.getLogger("backend.main").info("CRM started, logs: %s", LOG_FILE)
 
     database.init_db()
+    lead_files.init_table()
 
 
 @app.get("/api/health")
@@ -92,7 +96,11 @@ def health():
 
 @app.get("/api/leads")
 def list_leads():
-    return database.get_all_leads()
+    leads = database.get_all_leads()
+    counts = lead_files.counts_by_lead()
+    for lead in leads:
+        lead["files_count"] = counts.get(lead["id"], 0)
+    return leads
 
 
 @app.get("/api/leads/{lead_id}")
@@ -641,6 +649,87 @@ def avito_diagnostic():
         "webhook_url": "https://crm.flowcabinet.ru/api/avito/webhook",
         "summary": "ok" if all(s.get("ok") for s in steps if s.get("ok") is not None) else "check steps",
     })
+
+
+# ─── Файлы лида ─────────────────────────────────────────────
+
+def _require_lead(lead_id: int) -> None:
+    if database.get_lead_by_id(lead_id) is None:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+
+@app.get("/api/leads/{lead_id}/files", response_model=list[LeadFile], tags=["files"],
+         summary="Список файлов лида")
+def list_lead_files(lead_id: int):
+    _require_lead(lead_id)
+    return lead_files.list_files(lead_id)
+
+
+@app.post("/api/leads/{lead_id}/files", response_model=list[LeadFile], tags=["files"],
+          summary="Загрузить файлы к лиду (multipart, поле files, можно несколько)",
+          description=f"Любые типы. Лимит {lead_files.MAX_FILE_SIZE // (1024 * 1024)} МБ на файл, "
+                      f"до {lead_files.MAX_FILES_PER_REQUEST} файлов за запрос. 413 при превышении (ничего не сохраняется).")
+def upload_lead_files(lead_id: int, files: list[UploadFile] = File(..., description="Один или несколько файлов")):
+    _require_lead(lead_id)
+    if not files:
+        raise HTTPException(status_code=400, detail="No files")
+    if len(files) > lead_files.MAX_FILES_PER_REQUEST:
+        raise HTTPException(status_code=400, detail=f"Too many files (max {lead_files.MAX_FILES_PER_REQUEST})")
+    saved: list[tuple[str, str, str, int]] = []
+    try:
+        for f in files:
+            name = lead_files.sanitize_name(f.filename)
+            stored, size = lead_files.save_stream(lead_id, f.file)
+            saved.append((name, stored, lead_files.guess_mime(name, f.content_type), size))
+    except lead_files.FileTooLarge:
+        for _, stored, _, _ in saved:
+            lead_files.remove_stored(lead_id, stored)
+        raise HTTPException(status_code=413, detail=f"File too large (max {lead_files.MAX_FILE_SIZE // (1024 * 1024)} MB)")
+    except Exception:
+        for _, stored, _, _ in saved:
+            lead_files.remove_stored(lead_id, stored)
+        raise
+    result = [lead_files.insert_file(lead_id, n, st, mt, sz) for n, st, mt, sz in saved]
+    logging.getLogger("backend.main").info("lead %s: uploaded %d file(s)", lead_id, len(result))
+    return result
+
+
+def _content_disposition(kind: str, name: str) -> str:
+    ascii_name = "".join(ch if 32 <= ord(ch) < 127 and ch not in '"\\;' else "_" for ch in name) or "file"
+    return f"{kind}; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name, safe='')}"
+
+
+@app.get("/api/leads/{lead_id}/files/{file_id}", tags=["files"],
+         summary="Открыть/скачать файл",
+         description="Картинки и PDF отдаются inline (открываются в браузере), остальное как attachment. "
+                     "?download=1 — всегда скачивание.",
+         response_class=FileResponse)
+def get_lead_file(lead_id: int, file_id: int, download: bool = False):
+    raw = lead_files.get_file_raw(lead_id, file_id)
+    if not raw:
+        raise HTTPException(status_code=404, detail="File not found")
+    try:
+        path = lead_files.safe_path(lead_id, raw["stored_name"])
+    except ValueError:
+        raise HTTPException(status_code=404, detail="File not found")
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="File missing on disk")
+    mime = raw["mime_type"] or "application/octet-stream"
+    inline = (not download) and mime in lead_files.INLINE_TYPES
+    headers = {
+        "Content-Disposition": _content_disposition("inline" if inline else "attachment", raw["original_name"]),
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "private, max-age=3600",
+    }
+    return FileResponse(path, media_type=mime, headers=headers)
+
+
+@app.delete("/api/leads/{lead_id}/files/{file_id}", tags=["files"], summary="Удалить файл лида")
+def delete_lead_file(lead_id: int, file_id: int):
+    if not lead_files.delete_file(lead_id, file_id):
+        raise HTTPException(status_code=404, detail="File not found")
+    logging.getLogger("backend.main").info("lead %s: deleted file %s", lead_id, file_id)
+    return {"ok": True}
 
 
 # Статика фронтенда по корневому пути (подключать после /api)

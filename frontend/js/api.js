@@ -303,3 +303,50 @@ async function apiRegisterAvitoWebhook(url) {
     throw e;
   }
 }
+
+// ─── Файлы лида ─────────────────────────────────────────────
+async function apiGetLeadFiles(leadId) {
+  try {
+    const res = await fetch(`${BASE}/leads/${leadId}/files`);
+    if (!res.ok) throw new Error(res.statusText);
+    return await res.json();
+  } catch (e) {
+    console.error('apiGetLeadFiles:', e);
+    return null;
+  }
+}
+
+async function apiDeleteLeadFile(leadId, fileId) {
+  try {
+    const res = await fetch(`${BASE}/leads/${leadId}/files/${fileId}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(res.statusText);
+    return await res.json();
+  } catch (e) {
+    console.error('apiDeleteLeadFile:', e);
+    return null;
+  }
+}
+
+// Загрузка одного файла через XHR — ради прогресса. onProgress(0..1). Резолвит {ok, data|error}.
+function apiUploadLeadFile(leadId, file, onProgress) {
+  return new Promise(resolve => {
+    const xhr = new XMLHttpRequest();
+    const fd = new FormData();
+    fd.append('files', file, file.name);
+    xhr.open('POST', `${BASE}/leads/${leadId}/files`);
+    xhr.upload.onprogress = e => { if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total); };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        let data = null;
+        try { data = JSON.parse(xhr.responseText); } catch (_) {}
+        resolve({ ok: true, data });
+      } else {
+        let msg = 'Ошибка ' + xhr.status;
+        if (xhr.status === 413) msg = 'Файл слишком большой';
+        resolve({ ok: false, error: msg });
+      }
+    };
+    xhr.onerror = () => resolve({ ok: false, error: 'Сеть недоступна' });
+    xhr.send(fd);
+  });
+}

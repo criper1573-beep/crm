@@ -102,3 +102,14 @@ class MessageBulkItem(BaseModel):
 
 class MessageDirectionUpdate(BaseModel):
     direction: str = Field(..., description="in / out")
+
+
+class LeadFile(BaseModel):
+    id: int = Field(..., description="ID файла")
+    lead_id: int = Field(..., description="ID лида")
+    original_name: str = Field(..., description="Исходное имя файла")
+    mime_type: str = Field(..., description="MIME-тип")
+    size: int = Field(..., description="Размер в байтах")
+    created_at: str | None = Field(default=None, description="Дата загрузки (UTC, YYYY-MM-DD HH:MM:SS)")
+    url: str = Field(..., description="URL для открытия/скачивания (GET, та же Basic auth)")
+    is_image: bool = Field(..., description="Картинка, которую можно показать как превью")

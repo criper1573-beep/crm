@@ -718,6 +718,7 @@ function renderList() {
         <span class="sbadge ${si.cls}">${escapeHtml(si.label)}</span>
         ${bi ? `<span class="btag ${bi.cls}">${escapeHtml(bi.label)}</span>` : ''}
         ${l.obj ? `<span class="otag">${escapeHtml(l.obj)}</span>` : ''}
+        ${l.files_count ? `<span class="otag ftag" title="Файлов: ${l.files_count}">${PAPERCLIP_SVG}${l.files_count}</span>` : ''}
       </div>
     </div>`;
   }).join('');
@@ -902,7 +903,7 @@ function renderDetail() {
     </div>
     <div class="tab-body fade-in" id="tabBody">${renderTab(l)}</div>
   `;
-  if (activeTab === 'overview') setTimeout(() => loadNotesIntoFeed(activeId, activeObjectId), 0);
+  if (activeTab === 'overview') setTimeout(() => { loadNotesIntoFeed(activeId, activeObjectId); loadLeadFiles(activeId); }, 0);
   if (activeTab === 'msgs') setTimeout(() => loadMessagesIntoFeed(activeId), 0);
 }
 
@@ -918,7 +919,7 @@ function switchTab(tab) {
   const tb = document.getElementById('tabBody');
   tb.innerHTML = renderTab(l);
   tb.classList.remove('fade-in'); void tb.offsetWidth; tb.classList.add('fade-in');
-  if (tab === 'overview') loadNotesIntoFeed(activeId, activeObjectId);
+  if (tab === 'overview') { loadNotesIntoFeed(activeId, activeObjectId); loadLeadFiles(activeId); }
   if (tab === 'msgs') setTimeout(() => loadMessagesIntoFeed(activeId), 0);
 }
 
@@ -1288,6 +1289,8 @@ function renderOverview(l) {
       <button type="button" class="dbtn" id="btnSummarize-${leadId}" style="margin-top:8px" onclick="requestLeadSummary(${leadId})">Обновить из переписки и заметок</button>
     </div>
 
+    ${renderFilesBlock(l)}
+
     <div class="overview-block work-types-block" id="cardField-${leadId}-${objectId || 'l'}-work_types">
       <div class="overview-block-title work-types-toggle" onclick="toggleWorkTypesBlock(this)">Виды работ <span class="wt-chevron">▼</span></div>
       <div class="work-types-row work-types-body collapsed">${workTypesHtml}</div>
@@ -1336,7 +1339,7 @@ function selectOverviewObject(objectId) {
   activeObjectId = objectId;
   saveState();
   const l = leads.find(x => x.id === activeId);
-  if (l) { const tb = document.getElementById('tabBody'); if (tb) tb.innerHTML = renderOverview(l); if (activeTab === 'overview') loadNotesIntoFeed(activeId, objectId); }
+  if (l) { const tb = document.getElementById('tabBody'); if (tb) tb.innerHTML = renderOverview(l); if (activeTab === 'overview') { loadNotesIntoFeed(activeId, objectId); loadLeadFiles(activeId); } }
 }
 
 async function addOverviewObject(leadId) {
@@ -1882,6 +1885,7 @@ async function init() {
     closeNavMenu();
     closeMobilePanels();
   });
+  initFileDropZone();
   loadState();
   const raw = await apiGetLeads();
   leads = (raw || []).map(mapLeadFromApi);
@@ -1897,4 +1901,161 @@ if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', init);
 } else {
   init();
+}
+
+// ─── ФАЙЛЫ ЛИДА ─────────────────────────────────────────────
+const FILE_MAX_BYTES = 50 * 1024 * 1024;
+const PAPERCLIP_SVG = '<svg class="ftag-icon" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path d="M21 11.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l8.6-8.6a3.7 3.7 0 0 1 5.2 5.2l-8.6 8.6a1.8 1.8 0 0 1-2.6-2.6l7.9-7.9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+function formatFileSize(n) {
+  n = Number(n) || 0;
+  if (n < 1024) return n + ' Б';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(n < 10240 ? 1 : 0).replace('.', ',') + ' КБ';
+  return (n / 1024 / 1024).toFixed(1).replace('.', ',') + ' МБ';
+}
+
+function formatFileDate(createdAt) {
+  if (!createdAt) return '';
+  // created_at хранится в UTC (SQLite datetime('now')) — показываем в локальном времени
+  const d = new Date(String(createdAt).replace(' ', 'T') + 'Z');
+  if (isNaN(d)) return String(createdAt);
+  const p = x => String(x).padStart(2, '0');
+  return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function fileExt(name) {
+  const m = String(name || '').match(/\.([A-Za-z0-9]{1,5})$/);
+  return m ? m[1].toUpperCase() : 'FILE';
+}
+
+function renderFilesBlock(l) {
+  return `
+    <div class="overview-block files-block" id="filesBlock-${l.id}">
+      <div class="files-head">
+        <div class="overview-block-title">Файлы <span class="files-count" id="filesCount-${l.id}"></span></div>
+        <label class="dbtn files-add-btn">
+          Добавить файл
+          <input type="file" multiple class="files-input" onchange="onLeadFilesSelected(${l.id}, this)">
+        </label>
+      </div>
+      <div class="files-drop" id="filesDrop-${l.id}">Перетащите файлы в карточку лида — до 50 МБ каждый</div>
+      <div class="files-uploads" id="filesUploads-${l.id}"></div>
+      <div class="files-list" id="filesList-${l.id}"><div class="files-empty">Загрузка...</div></div>
+    </div>`;
+}
+
+async function loadLeadFiles(leadId) {
+  const el = document.getElementById('filesList-' + leadId);
+  if (!el) return;
+  const list = await apiGetLeadFiles(leadId);
+  if (!document.getElementById('filesList-' + leadId)) return;
+  if (list == null) { el.innerHTML = '<div class="files-empty">Не удалось загрузить список файлов</div>'; return; }
+  const cnt = document.getElementById('filesCount-' + leadId);
+  if (cnt) cnt.textContent = list.length ? String(list.length) : '';
+  const l = leads.find(x => x.id === leadId);
+  if (l && (l.files_count || 0) !== list.length) { l.files_count = list.length; renderList(); }
+  if (!list.length) { el.innerHTML = '<div class="files-empty">Файлов пока нет</div>'; return; }
+  el.innerHTML = list.map(f => {
+    const url = escapeHtml(f.url);
+    const thumb = f.is_image
+      ? `<a href="${url}" target="_blank" rel="noopener" class="file-thumb"><img src="${url}" alt="" loading="lazy"></a>`
+      : `<a href="${url}" target="_blank" rel="noopener" class="file-thumb file-thumb-ext">${escapeHtml(fileExt(f.original_name))}</a>`;
+    return `<div class="file-item" id="fileItem-${f.id}">
+      ${thumb}
+      <div class="file-info">
+        <a href="${url}" target="_blank" rel="noopener" class="file-name" title="${escapeHtml(f.original_name)}">${escapeHtml(f.original_name)}</a>
+        <div class="file-meta">${escapeHtml(formatFileSize(f.size))} · ${escapeHtml(formatFileDate(f.created_at))}</div>
+      </div>
+      <a href="${url}?download=1" class="file-btn" title="Скачать" aria-label="Скачать">↓</a>
+      <button type="button" class="file-btn file-btn-del" title="Удалить" aria-label="Удалить" onclick="deleteLeadFile(${leadId}, ${f.id})">×</button>
+    </div>`;
+  }).join('');
+}
+
+async function deleteLeadFile(leadId, fileId) {
+  const item = document.getElementById('fileItem-' + fileId);
+  const nameEl = item && item.querySelector('.file-name');
+  const name = nameEl ? nameEl.textContent : 'файл';
+  if (!confirm(`Удалить «${name}»? Восстановить будет нельзя.`)) return;
+  const ok = await apiDeleteLeadFile(leadId, fileId);
+  if (!ok) { alert('Не удалось удалить файл'); return; }
+  loadLeadFiles(leadId);
+}
+
+function onLeadFilesSelected(leadId, input) {
+  const files = Array.from(input.files || []);
+  input.value = '';
+  uploadLeadFiles(leadId, files);
+}
+
+async function uploadLeadFiles(leadId, files) {
+  if (!files || !files.length) return;
+  const box = document.getElementById('filesUploads-' + leadId);
+  const rows = files.map((f, i) => {
+    const id = 'up-' + Date.now() + '-' + i;
+    if (box) box.insertAdjacentHTML('beforeend', `<div class="file-upload" id="${id}">
+      <div class="file-upload-top"><span class="file-upload-name">${escapeHtml(f.name)}</span><span class="file-upload-pct">0%</span></div>
+      <div class="file-upload-bar"><span style="width:0%"></span></div></div>`);
+    return id;
+  });
+  let anyOk = false;
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    const row = document.getElementById(rows[i]);
+    const setState = (pct, text, cls) => {
+      if (!row) return;
+      const bar = row.querySelector('.file-upload-bar span');
+      const t = row.querySelector('.file-upload-pct');
+      if (bar) bar.style.width = Math.round(pct * 100) + '%';
+      if (t) t.textContent = text;
+      if (cls) row.classList.add(cls);
+    };
+    if (f.size > FILE_MAX_BYTES) { setState(0, 'больше 50 МБ', 'is-error'); continue; }
+    const res = await apiUploadLeadFile(leadId, f, p => setState(p, Math.round(p * 100) + '%'));
+    if (res.ok) { anyOk = true; setState(1, 'готово', 'is-done'); setTimeout(() => row && row.remove(), 1500); }
+    else setState(0, res.error, 'is-error');
+  }
+  if (anyOk) loadLeadFiles(leadId);
+  // ошибки остаются видны 6 секунд
+  setTimeout(() => rows.forEach(id => { const r = document.getElementById(id); if (r) r.remove(); }), 6000);
+}
+
+function dragHasFiles(e) {
+  const t = e.dataTransfer && e.dataTransfer.types;
+  return !!t && Array.from(t).includes('Files');
+}
+
+function initFileDropZone() {
+  const detail = document.getElementById('detail');
+  if (!detail) return;
+  let depth = 0;
+  const setActive = on => {
+    detail.classList.toggle('files-dragover', on);
+    const z = activeId != null && document.getElementById('filesDrop-' + activeId);
+    if (z) z.classList.toggle('dragover', on);
+  };
+  detail.addEventListener('dragenter', e => {
+    if (!dragHasFiles(e) || activeId == null) return;
+    e.preventDefault(); depth++; setActive(true);
+  });
+  detail.addEventListener('dragover', e => {
+    if (!dragHasFiles(e) || activeId == null) return;
+    e.preventDefault(); e.dataTransfer.dropEffect = 'copy';
+  });
+  detail.addEventListener('dragleave', e => {
+    if (!dragHasFiles(e)) return;
+    depth = Math.max(0, depth - 1); if (!depth) setActive(false);
+  });
+  detail.addEventListener('drop', e => {
+    if (!dragHasFiles(e) || activeId == null) return;
+    e.preventDefault(); depth = 0; setActive(false);
+    const files = Array.from(e.dataTransfer.files || []);
+    if (!files.length) return;
+    const leadId = activeId;
+    if (activeTab !== 'overview') switchTab('overview');
+    uploadLeadFiles(leadId, files);
+  });
+  // Файл, брошенный мимо зоны, не должен открываться вместо CRM
+  window.addEventListener('dragover', e => { if (dragHasFiles(e)) e.preventDefault(); });
+  window.addEventListener('drop', e => { if (dragHasFiles(e)) e.preventDefault(); });
 }

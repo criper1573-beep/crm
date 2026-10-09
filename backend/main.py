@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend import database
@@ -641,6 +641,12 @@ def avito_diagnostic():
         "webhook_url": "https://crm.flowcabinet.ru/api/avito/webhook",
         "summary": "ok" if all(s.get("ok") for s in steps if s.get("ok") is not None) else "check steps",
     })
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon_ico():
+    """Браузеры запрашивают /favicon.ico отдельно от <link rel=icon>."""
+    return FileResponse(FRONTEND_DIR / "favicon.png", media_type="image/png")
 
 
 # Статика фронтенда по корневому пути (подключать после /api)

@@ -1,6 +1,7 @@
 # SQLite logic
 
 import json
+import re
 import sqlite3
 from pathlib import Path
 
@@ -107,6 +108,25 @@ def init_db() -> None:
         msg_cols = [r[1] for r in cur.fetchall()]
         if "avito_message_id" not in msg_cols:
             conn.execute("ALTER TABLE messages ADD COLUMN avito_message_id TEXT")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS payments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                lead_id INTEGER NOT NULL,
+                object_id INTEGER,
+                paid_at TEXT NOT NULL,
+                amount INTEGER NOT NULL,
+                note TEXT NOT NULL DEFAULT '',
+                source TEXT NOT NULL DEFAULT 'manual',
+                external_id TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_external_id "
+            "ON payments(external_id) WHERE external_id IS NOT NULL"
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_payments_lead ON payments(lead_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_payments_paid ON payments(paid_at)")
         conn.commit()
 
 
@@ -194,7 +214,53 @@ def get_all_leads() -> list[dict]:
         else:
             lead["objects"] = []
             lead["effective_deal_amount"] = lead.get("deal_amount") or 0
+    grouped: dict[int, list[dict]] = {}
+    for payment in list_payments():
+        grouped.setdefault(payment["lead_id"], []).append(payment)
+    for lead in leads_list:
+        lead["payments"] = grouped.get(lead["id"], [])
     return leads_list
+
+
+_ISO_STAMP = re.compile(r"^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?")
+LEAD_SORTS = ("created_desc", "created_asc", "last_message")
+
+
+def _lead_stamp(value: str | None) -> str:
+    raw = (value or "").strip()
+    match = _ISO_STAMP.match(raw)
+    if not match:
+        return ""
+    hh = match.group(4) or "00"
+    mm = match.group(5) or "00"
+    ss = match.group(6) or "00"
+    return f"{match.group(1)}-{match.group(2)}-{match.group(3)} {hh}:{mm}:{ss}"
+
+
+def sort_leads(leads: list[dict], mode: str) -> list[dict]:
+    """Порядок списка. Не меняет записи, только возвращает новый список.
+
+    created_desc — created_at по убыванию, при равенстве id по убыванию.
+    created_asc — created_at по возрастанию, при равенстве id по возрастанию.
+    last_message — дата последнего сообщения по убыванию; без сообщений в конце.
+    """
+    rows = list(leads)
+
+    def lead_id(lead: dict) -> int:
+        try:
+            return int(lead.get("id") or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    if mode == "created_desc":
+        rows.sort(key=lambda lead: (_lead_stamp(lead.get("created_at")), lead_id(lead)), reverse=True)
+    elif mode == "created_asc":
+        rows.sort(key=lambda lead: (_lead_stamp(lead.get("created_at")) or "9999-99-99 99:99:99", lead_id(lead)))
+    elif mode == "last_message":
+        rows.sort(key=lambda lead: (_lead_stamp(lead.get("last_message_date")), lead_id(lead)), reverse=True)
+    else:
+        raise ValueError(mode)
+    return rows
 
 
 def get_lead_by_id(lead_id: int) -> dict | None:
@@ -284,6 +350,7 @@ def update_lead(lead_id: int, lead: Lead) -> bool:
 
 def delete_lead(lead_id: int) -> bool:
     with get_connection() as conn:
+        conn.execute("DELETE FROM payments WHERE lead_id = ?", (lead_id,))
         cur = conn.execute("DELETE FROM leads WHERE id = ?", (lead_id,))
         conn.commit()
         return cur.rowcount > 0
@@ -366,6 +433,7 @@ def update_lead_object(object_id: int, obj: LeadObjectCreate | dict) -> bool:
 def delete_lead_object(object_id: int) -> bool:
     with get_connection() as conn:
         conn.execute("UPDATE notes SET lead_object_id = NULL WHERE lead_object_id = ?", (object_id,))
+        conn.execute("UPDATE payments SET object_id = NULL WHERE object_id = ?", (object_id,))
         cur = conn.execute("DELETE FROM lead_objects WHERE id = ?", (object_id,))
         conn.commit()
         return cur.rowcount > 0
@@ -639,6 +707,309 @@ def _parse_date_to_ymd(s: str):
     if m:
         return (int(m.group(3)), int(m.group(2)), int(m.group(1)))
     return None
+
+
+class PaymentError(ValueError):
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__(code)
+
+
+def _to_ymd(value: str | None) -> str:
+    parsed = _parse_date_to_ymd(value or "")
+    if not parsed:
+        return ""
+    year, month, day = parsed
+    try:
+        from datetime import date
+        date(year, month, day)
+    except ValueError:
+        return ""
+    return f"{year:04d}-{month:02d}-{day:02d}"
+
+
+def _payment_row(row: sqlite3.Row) -> dict:
+    item = dict(row)
+    item["amount"] = int(item["amount"])
+    if item.get("object_id") is not None:
+        item["object_id"] = int(item["object_id"])
+    if not item.get("external_id"):
+        item["external_id"] = None
+    return item
+
+
+def list_payments(lead_id: int | None = None) -> list[dict]:
+    with get_connection() as conn:
+        if lead_id is None:
+            cur = conn.execute(
+                "SELECT id, lead_id, object_id, paid_at, amount, note, source, external_id, created_at "
+                "FROM payments ORDER BY paid_at DESC, id DESC"
+            )
+        else:
+            cur = conn.execute(
+                "SELECT id, lead_id, object_id, paid_at, amount, note, source, external_id, created_at "
+                "FROM payments WHERE lead_id = ? ORDER BY paid_at DESC, id DESC",
+                (lead_id,),
+            )
+        return [_payment_row(row) for row in cur.fetchall()]
+
+
+def get_payment(payment_id: int) -> dict | None:
+    with get_connection() as conn:
+        cur = conn.execute(
+            "SELECT id, lead_id, object_id, paid_at, amount, note, source, external_id, created_at "
+            "FROM payments WHERE id = ?",
+            (payment_id,),
+        )
+        row = cur.fetchone()
+        return _payment_row(row) if row else None
+
+
+def _clean_external_id(value) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _require_object(lead_id: int, object_id: int | None) -> int | None:
+    if object_id in (None, 0, ""):
+        return None
+    try:
+        object_id = int(object_id)
+    except (TypeError, ValueError):
+        raise PaymentError("bad_object")
+    obj = get_object_by_id(object_id)
+    if obj is None or obj.get("lead_id") != lead_id:
+        raise PaymentError("bad_object")
+    return object_id
+
+
+def save_payment(lead_id: int, payload: dict, payment_id: int | None = None) -> tuple[dict, bool]:
+    """Создаёт платёж или обновляет существующий. Возвращает (платёж, created).
+
+    POST с уже известным external_id обновляет ту же строку (идемпотентный импорт),
+    в том числе переносит её на lead_id из URL.
+    """
+    current = None
+    if payment_id is not None:
+        current = get_payment(payment_id)
+        if current is None or current["lead_id"] != lead_id:
+            raise PaymentError("not_found")
+
+    if "paid_at" in payload and payload.get("paid_at") is not None:
+        paid_at = _to_ymd(str(payload.get("paid_at")))
+        if not paid_at:
+            raise PaymentError("bad_date")
+    elif current is not None:
+        paid_at = current["paid_at"]
+    else:
+        raise PaymentError("bad_date")
+
+    if "amount" in payload and payload.get("amount") is not None:
+        try:
+            amount = int(payload.get("amount"))
+        except (TypeError, ValueError):
+            raise PaymentError("bad_amount")
+    elif current is not None:
+        amount = current["amount"]
+    else:
+        raise PaymentError("bad_amount")
+
+    if "note" in payload and payload.get("note") is not None:
+        note = str(payload.get("note") or "")
+    elif current is not None:
+        note = current["note"]
+    else:
+        note = ""
+
+    if "source" in payload and payload.get("source") is not None:
+        source = str(payload.get("source"))
+    elif current is not None:
+        source = current["source"]
+    else:
+        source = "manual"
+    if source not in ("manual", "erp"):
+        raise PaymentError("bad_source")
+
+    if "object_id" in payload:
+        object_id = _require_object(lead_id, payload.get("object_id"))
+    elif current is not None:
+        object_id = _require_object(lead_id, current.get("object_id"))
+    else:
+        object_id = None
+
+    if "external_id" in payload:
+        external_id = _clean_external_id(payload.get("external_id"))
+    elif current is not None:
+        external_id = current.get("external_id")
+    else:
+        external_id = None
+
+    with get_connection() as conn:
+        if external_id:
+            other = conn.execute(
+                "SELECT id FROM payments WHERE external_id = ?",
+                (external_id,),
+            ).fetchone()
+            if other is not None and (current is None or other["id"] != current["id"]):
+                if current is not None:
+                    raise PaymentError("duplicate_external")
+                current = get_payment(other["id"])
+                payment_id = other["id"]
+
+        if current is not None:
+            conn.execute(
+                """UPDATE payments
+                   SET lead_id = ?, object_id = ?, paid_at = ?, amount = ?, note = ?, source = ?, external_id = ?
+                   WHERE id = ?""",
+                (lead_id, object_id, paid_at, amount, note, source, external_id, payment_id),
+            )
+            conn.commit()
+            created = False
+            saved_id = payment_id
+        else:
+            try:
+                cur = conn.execute(
+                    """INSERT INTO payments (lead_id, object_id, paid_at, amount, note, source, external_id)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (lead_id, object_id, paid_at, amount, note, source, external_id),
+                )
+                conn.commit()
+                created = True
+                saved_id = cur.lastrowid
+            except sqlite3.IntegrityError:
+                conn.rollback()
+                other = conn.execute(
+                    "SELECT id FROM payments WHERE external_id = ?",
+                    (external_id,),
+                ).fetchone()
+                if other is None or not external_id:
+                    raise
+                conn.execute(
+                    """UPDATE payments
+                       SET lead_id = ?, object_id = ?, paid_at = ?, amount = ?, note = ?, source = ?, external_id = ?
+                       WHERE id = ?""",
+                    (lead_id, object_id, paid_at, amount, note, source, external_id, other["id"]),
+                )
+                conn.commit()
+                created = False
+                saved_id = other["id"]
+    saved = get_payment(saved_id)
+    if saved is None:
+        raise PaymentError("not_found")
+    return saved, created
+
+
+def delete_payment(lead_id: int, payment_id: int) -> bool:
+    with get_connection() as conn:
+        cur = conn.execute(
+            "DELETE FROM payments WHERE id = ? AND lead_id = ?",
+            (payment_id, lead_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+PERIODS = ("week", "month", "prev_month", "quarter", "year", "all", "custom")
+_PERIOD_ALIASES = {"7": "week", "30": "month", "90": "quarter"}
+
+
+def canonical_period(period: str | None) -> str:
+    key = (period or "").strip()
+    if key in _PERIOD_ALIASES:
+        return _PERIOD_ALIASES[key]
+    if key in PERIODS:
+        return key
+    return "month"
+
+
+def known_period(period: str | None) -> bool:
+    key = (period or "").strip()
+    return key in PERIODS or key in _PERIOD_ALIASES
+
+
+def period_range(period: str | None, start: str | None, end: str | None, today: str) -> tuple[str, str]:
+    """Границы периода включительно. week/month/quarter/year — последние 7/30/90/365 дней."""
+    from datetime import date, timedelta
+
+    key = canonical_period(period)
+    today_ymd = _to_ymd(today) or date.today().isoformat()
+    today_date = date.fromisoformat(today_ymd)
+    if key == "all":
+        return "", ""
+    if key == "week":
+        return (today_date - timedelta(days=6)).isoformat(), today_ymd
+    if key == "month":
+        return (today_date - timedelta(days=29)).isoformat(), today_ymd
+    if key == "quarter":
+        return (today_date - timedelta(days=89)).isoformat(), today_ymd
+    if key == "year":
+        return (today_date - timedelta(days=364)).isoformat(), today_ymd
+    if key == "prev_month":
+        first_this = today_date.replace(day=1)
+        last_prev = first_this - timedelta(days=1)
+        first_prev = last_prev.replace(day=1)
+        return first_prev.isoformat(), last_prev.isoformat()
+    range_start = _to_ymd(start or "")
+    range_end = _to_ymd(end or "")
+    if range_start and range_end and range_start > range_end:
+        range_start, range_end = range_end, range_start
+    return range_start, range_end
+
+
+def _in_range(ymd: str, start: str, end: str) -> bool:
+    if not ymd:
+        return False
+    if start and ymd < start:
+        return False
+    if end and ymd > end:
+        return False
+    return True
+
+
+def counts_in_period(lead: dict, start: str, end: str) -> bool:
+    """Клиент/повторно: есть платёж в периоде, либо лид создан в периоде и платежей нет.
+
+    Импорт с уже записанными старыми платежами не считается новым клиентом периода,
+    даже если created_at попадает в этот период.
+    """
+    if lead.get("status") not in ("client", "repeat"):
+        return False
+    payments = lead.get("payments") or []
+    if any(_in_range(_to_ymd(item.get("paid_at")), start, end) for item in payments):
+        return True
+    if payments:
+        return False
+    return _in_range(_to_ymd(lead.get("created_at")), start, end)
+
+
+def analytics_summary(period: str | None, start: str | None, end: str | None, today: str) -> dict:
+    range_start, range_end = period_range(period, start, end, today)
+    revenue = 0
+    deal_amount = 0
+    clients = 0
+    repeats = 0
+    for lead in get_all_leads():
+        for payment in lead.get("payments") or []:
+            if _in_range(_to_ymd(payment.get("paid_at")), range_start, range_end):
+                revenue += int(payment.get("amount") or 0)
+        if not counts_in_period(lead, range_start, range_end):
+            continue
+        deal_amount += int(lead.get("effective_deal_amount") or 0)
+        if lead.get("status") == "client":
+            clients += 1
+        elif lead.get("status") == "repeat":
+            repeats += 1
+    return {
+        "period": canonical_period(period),
+        "start": range_start,
+        "end": range_end,
+        "revenue": revenue,
+        "deal_amount": deal_amount,
+        "clients": clients,
+        "repeats": repeats,
+    }
 
 
 def sync_created_at_from_last_contact() -> int:

@@ -104,6 +104,36 @@ class MessageDirectionUpdate(BaseModel):
     direction: str = Field(..., description="in / out")
 
 
+class PaymentCreate(BaseModel):
+    paid_at: str = Field(..., description="Дата поступления: YYYY-MM-DD, DD.MM.YYYY или D.M.YY")
+    amount: int = Field(..., description="Сумма в рублях")
+    note: str = Field(default="", description="Комментарий")
+    source: Literal["manual", "erp"] = Field(default="manual", description="manual или erp")
+    external_id: str | None = Field(default=None, description="ID чека ERP. Повторный POST с тем же id обновляет платёж")
+    object_id: int | None = Field(default=None, description="Объект лида, если их несколько")
+
+
+class PaymentUpdate(BaseModel):
+    paid_at: str | None = Field(default=None, description="Дата поступления")
+    amount: int | None = Field(default=None, description="Сумма в рублях")
+    note: str | None = Field(default=None, description="Комментарий")
+    source: Literal["manual", "erp"] | None = Field(default=None, description="manual или erp")
+    external_id: str | None = Field(default=None, description="ID чека ERP")
+    object_id: int | None = Field(default=None, description="Объект лида")
+
+
+class Payment(BaseModel):
+    id: int
+    lead_id: int
+    object_id: int | None = None
+    paid_at: str
+    amount: int
+    note: str = ""
+    source: Literal["manual", "erp"] = "manual"
+    external_id: str | None = None
+    created_at: str | None = None
+
+
 class LeadFile(BaseModel):
     id: int = Field(..., description="ID файла")
     lead_id: int = Field(..., description="ID лида")

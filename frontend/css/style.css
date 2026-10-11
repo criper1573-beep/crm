@@ -1217,3 +1217,24 @@ td.num, th.num { text-align: right; white-space: nowrap; }
   .files-drop { display: none; }
   .file-btn { width: 44px; height: 44px; }
 }
+.crm-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%) translateY(8px);
+  max-width: min(420px, calc(100% - 32px));
+  padding: 10px 14px;
+  background: var(--ink);
+  color: var(--card);
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 600;
+  z-index: 200;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .15s ease, transform .15s ease;
+}
+.crm-toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}

@@ -133,6 +133,61 @@
     return list;
   }
 
+  var MAX_LEAD_ID = 9007199254740991;
+
+  function parseLeadHash(hash) {
+    var raw = String(hash == null ? '' : hash);
+    if (raw.charAt(0) === '#') raw = raw.slice(1);
+    var m = /^lead\/([1-9]\d*)$/.exec(raw);
+    if (!m) return null;
+    var id = Number(m[1]);
+    if (!isFinite(id) || id <= 0 || id > MAX_LEAD_ID || String(id) !== m[1]) return null;
+    return id;
+  }
+
+  function leadHash(id) {
+    if (typeof id === 'number') {
+      if (!isFinite(id) || id <= 0 || Math.floor(id) !== id || id > MAX_LEAD_ID) return '';
+      return '#lead/' + id;
+    }
+    var s = String(id == null ? '' : id);
+    if (!/^[1-9]\d*$/.test(s)) return '';
+    var n = Number(s);
+    if (!isFinite(n) || n > MAX_LEAD_ID || String(n) !== s) return '';
+    return '#lead/' + s;
+  }
+
+  function leadUrl(origin, pathname, search, id) {
+    var hash = leadHash(id);
+    if (!hash) return '';
+    return String(origin || '') + String(pathname == null ? '' : pathname) + String(search == null ? '' : search) + hash;
+  }
+
+  function isListHash(hash) {
+    var raw = String(hash == null ? '' : hash);
+    return raw === '' || raw === '#';
+  }
+
+  function missingLeadMessage(id) {
+    return 'Лид #' + id + ' не найден';
+  }
+
+  function leadRouteAction(hash, knownIds, activeId) {
+    var id = parseLeadHash(hash);
+    if (id != null) {
+      var known = false;
+      var list = knownIds || [];
+      for (var i = 0; i < list.length; i++) {
+        if (list[i] === id) { known = true; break; }
+      }
+      if (!known) return { type: 'missing', id: id };
+      if (activeId === id) return { type: 'keep', id: id };
+      return { type: 'open', id: id };
+    }
+    if (isListHash(hash)) return { type: 'list', id: null };
+    return { type: 'ignore', id: null };
+  }
+
   return {
     SORTS: SORTS,
     PERIODS: PERIODS,
@@ -142,5 +197,11 @@
     leadMatchesCreatedPeriod: leadMatchesCreatedPeriod,
     periodCaption: periodCaption,
     sortLeads: sortLeads,
+    parseLeadHash: parseLeadHash,
+    leadHash: leadHash,
+    leadUrl: leadUrl,
+    isListHash: isListHash,
+    missingLeadMessage: missingLeadMessage,
+    leadRouteAction: leadRouteAction,
   };
 });

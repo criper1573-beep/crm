@@ -431,12 +431,7 @@ async function deleteLead(id) {
   const ok = await apiDeleteLead(id);
   if (!ok) return;
   await reloadLeads();
-  if (activeId === id) {
-    activeId = null;
-    document.getElementById('detail').innerHTML = `
-      <div class="empty"><div class="empty-mark" aria-hidden="true">FL<span>O</span>W</div><div class="empty-title">Выберите лида</div></div>
-    `;
-  }
+  if (activeId === id) closeLeadCard();
 }
 
 // ─── STATE ─────────────────────────────────────────────────
@@ -832,7 +827,130 @@ function closeMobilePanels() {
 }
 
 // ─── OPEN LEAD ─────────────────────────────────────────────
-function openLead(id) {
+const EMPTY_DETAIL_HTML = '<div class="empty"><div class="empty-mark" aria-hidden="true">FL<span>O</span>W</div><div class="empty-title">Выберите лида</div></div>';
+let hashRoutingReady = false;
+let toastTimer = null;
+
+function showEmptyDetail() {
+  const detail = document.getElementById('detail');
+  if (detail) detail.innerHTML = EMPTY_DETAIL_HTML;
+}
+
+function listLocation() {
+  return location.pathname + location.search;
+}
+
+function writeLeadHash(id) {
+  const hash = id == null ? '' : LeadList.leadHash(id);
+  if (id != null && !hash) return;
+  if (id == null) {
+    if (LeadList.isListHash(location.hash)) return;
+    history.replaceState(null, '', listLocation());
+    return;
+  }
+  if (location.hash === hash) return;
+  history.replaceState(null, '', listLocation() + hash);
+}
+
+function closeLeadCard(opts) {
+  activeId = null;
+  headerEditMode = false;
+  activeObjectId = null;
+  saveState();
+  showEmptyDetail();
+  renderList();
+  if (!opts || !opts.keepHash) writeLeadHash(null);
+}
+
+function showToast(text) {
+  let el = document.getElementById('crmToast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'crmToast';
+    el.className = 'crm-toast';
+    el.setAttribute('role', 'status');
+    document.body.appendChild(el);
+  }
+  el.textContent = text;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2800);
+}
+
+function copyTextFallback(text) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.top = '0';
+    ta.style.left = '0';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return !!ok;
+  } catch (e) {
+    return false;
+  }
+}
+
+function copyText(text) {
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function' && window.isSecureContext) {
+    return navigator.clipboard.writeText(text).then(() => true).catch(() => copyTextFallback(text));
+  }
+  return Promise.resolve(copyTextFallback(text));
+}
+
+function copyLeadLink(id) {
+  const url = LeadList.leadUrl(location.origin, location.pathname, location.search, id);
+  if (!url) {
+    showToast('Не удалось скопировать ссылку');
+    return;
+  }
+  copyText(url).then(ok => {
+    showToast(ok ? 'Ссылка скопирована' : 'Не удалось скопировать ссылку');
+  });
+}
+
+function applyLeadRoute(fromHashChange) {
+  const action = LeadList.leadRouteAction(location.hash, leads.map(l => l.id), activeId);
+  if (action.type === 'missing') {
+    showToast(LeadList.missingLeadMessage(action.id));
+    if (activeId != null) closeLeadCard({ keepHash: true });
+    else showEmptyDetail();
+    return;
+  }
+  if (action.type === 'keep') {
+    if (fromHashChange && document.getElementById('detailHeader')) return;
+    renderDetail();
+    return;
+  }
+  if (action.type === 'open') {
+    openLead(action.id, { skipHash: true });
+    return;
+  }
+  if (fromHashChange) {
+    if (action.type === 'list' && activeId != null) closeLeadCard({ keepHash: true });
+    return;
+  }
+  if (activeId != null && leads.some(l => l.id === activeId)) {
+    renderDetail();
+    return;
+  }
+  const visible = visibleSortedLeads();
+  if (visible.length) openLead(visible[0].id, { skipHash: true });
+}
+
+function onLeadHashChange() {
+  if (!hashRoutingReady) return;
+  applyLeadRoute(true);
+}
+
+function openLead(id, opts) {
   activeId = id;
   activeTab = 'overview';
   headerEditMode = false;
@@ -849,8 +967,11 @@ function openLead(id) {
   }
   saveState();
   closeMobilePanels();
+  if (!opts || !opts.skipHash) writeLeadHash(id);
   renderList();
   renderDetail();
+  const card = document.getElementById('lc-' + id);
+  if (card && card.scrollIntoView) card.scrollIntoView({ block: 'nearest' });
 }
 
 function renderHeaderView(l) {
@@ -875,6 +996,7 @@ function renderHeaderView(l) {
           ${Object.entries(CONFIG.statuses).map(([k, v]) => `<button type="button" class="status-dropdown-item" data-status="${k}" style="color:${v.color};--status-bg:${v.bg}" onclick="selectStatus(${l.id}, '${k}', event)"><span class="status-dropdown-dot" style="background:${v.color}"></span>${v.label}</button>`).join('')}
         </div>
       </div>
+      <button type="button" class="dbtn" onclick="copyLeadLink(${l.id})">Скопировать ссылку</button>
       <button type="button" class="dbtn" onclick="toggleHeaderEdit()">Редактировать</button>
       <label class="toggle-wrap d-header-toggle" title="У клиента несколько объектов"><input type="checkbox" ${l.has_multiple_objects ? 'checked' : ''} onchange="toggleHasMultipleObjects(${l.id}, this.checked)"><span class="toggle-slider"></span><span class="toggle-label">Несколько объектов</span></label>
       <button type="button" class="dbtn danger" onclick="deleteLead(${l.id})">Удалить лид</button>
@@ -894,6 +1016,7 @@ function renderHeaderEdit(l) {
       <select id="headerEditStatus" class="d-header-edit-select">${statusOpts}</select>
     </div>
     <div class="d-actions">
+      <button type="button" class="dbtn" onclick="copyLeadLink(${l.id})">Скопировать ссылку</button>
       <button type="button" class="dbtn" onclick="cancelHeaderEdit()">Отмена</button>
       <button type="button" class="dbtn primary" onclick="saveHeaderEdit(${l.id})">Сохранить</button>
     </div>`;
@@ -1956,18 +2079,15 @@ async function init() {
     closeMobilePanels();
   });
   initFileDropZone();
+  window.addEventListener('hashchange', onLeadHashChange);
   loadState();
   loadListPrefs();
   const raw = await apiGetLeads();
   leads = (raw || []).map(mapLeadFromApi);
   syncListControls();
   setFilter(currentFilter);
-  if (activeId != null && leads.some(l => l.id === activeId)) {
-    renderDetail();
-  } else {
-    const visible = visibleSortedLeads();
-    if (visible.length) openLead(visible[0].id);
-  }
+  applyLeadRoute(false);
+  hashRoutingReady = true;
 }
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', init);

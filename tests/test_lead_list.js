@@ -45,4 +45,34 @@ assert.deepStrictEqual(LeadList.sortLeads(rows, 'created_asc').map(r => r.id), [
 assert.deepStrictEqual(LeadList.sortLeads(rows, 'last_message').map(r => r.id), [5, 4, 3, 1, 2]);
 assert.deepStrictEqual(LeadList.sortLeads(rows, 'unknown').map(r => r.id), LeadList.sortLeads(rows, 'created_desc').map(r => r.id));
 
+assert.strictEqual(LeadList.parseLeadHash('#lead/15'), 15);
+assert.strictEqual(LeadList.parseLeadHash('lead/15'), 15);
+assert.strictEqual(LeadList.parseLeadHash('#lead/012'), null);
+assert.strictEqual(LeadList.parseLeadHash('#lead/0'), null);
+assert.strictEqual(LeadList.parseLeadHash('#lead/-3'), null);
+assert.strictEqual(LeadList.parseLeadHash('#lead/1.5'), null);
+assert.strictEqual(LeadList.parseLeadHash('#lead/'), null);
+assert.strictEqual(LeadList.parseLeadHash('#lead/15/notes'), null);
+assert.strictEqual(LeadList.parseLeadHash('#lead/abc'), null);
+assert.strictEqual(LeadList.parseLeadHash(''), null);
+assert.strictEqual(LeadList.parseLeadHash('#'), null);
+assert.strictEqual(LeadList.parseLeadHash('#lead/9007199254740993'), null);
+assert.strictEqual(LeadList.leadHash(15), '#lead/15');
+assert.strictEqual(LeadList.leadHash('15'), '#lead/15');
+assert.strictEqual(LeadList.leadHash(0), '');
+assert.strictEqual(LeadList.leadHash('012'), '');
+assert.strictEqual(LeadList.leadUrl('https://crm.flowcabinet.ru', '/', '', 15), 'https://crm.flowcabinet.ru/#lead/15');
+assert.strictEqual(LeadList.leadUrl('https://crm.flowcabinet.ru', '/', '?x=1', 15), 'https://crm.flowcabinet.ru/?x=1#lead/15');
+assert.strictEqual(LeadList.leadUrl('https://crm.flowcabinet.ru', '/', '', 0), '');
+assert.strictEqual(LeadList.isListHash(''), true);
+assert.strictEqual(LeadList.isListHash('#'), true);
+assert.strictEqual(LeadList.isListHash('#lead/15'), false);
+assert.strictEqual(LeadList.missingLeadMessage(15), 'Лид #15 не найден');
+assert.deepStrictEqual(LeadList.leadRouteAction('#lead/15', [15, 16], null), { type: 'open', id: 15 });
+assert.deepStrictEqual(LeadList.leadRouteAction('#lead/15', [15, 16], 15), { type: 'keep', id: 15 });
+assert.deepStrictEqual(LeadList.leadRouteAction('#lead/99', [15], 15), { type: 'missing', id: 99 });
+assert.deepStrictEqual(LeadList.leadRouteAction('', [15], 15), { type: 'list', id: null });
+assert.deepStrictEqual(LeadList.leadRouteAction('#', [15], 15), { type: 'list', id: null });
+assert.deepStrictEqual(LeadList.leadRouteAction('#other', [15], 15), { type: 'ignore', id: null });
+
 console.log('lead-list ok');

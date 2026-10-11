@@ -9,10 +9,11 @@
 <link rel="icon" href="icon-32.png?v=flow2" type="image/png" sizes="32x32">
 <link rel="apple-touch-icon" href="icon-180.png?v=flow2" sizes="180x180">
 <link rel="stylesheet" href="css/fonts.css?v=flow2">
-<link rel="stylesheet" href="css/style.css?v=flow2">
+<link rel="stylesheet" href="css/style.css?v=flow3">
 <script src="js/config.js?v=flow2"></script>
 <script src="js/api.js?v=flow2"></script>
-<script src="js/app.js?v=flow2"></script>
+<script src="js/lead-list.js?v=flow3"></script>
+<script src="js/app.js?v=flow3"></script>
 </head>
 <body>
 
@@ -75,6 +76,16 @@
         <label class="visually-hidden" for="searchInput">Поиск лидов</label>
         <input type="search" id="searchInput" placeholder="Имя, адрес, комментарий..." oninput="filterLeads()">
       </div>
+      <div class="list-toolbar">
+        <label class="list-sort" for="leadSort">Сортировка
+          <select id="leadSort" onchange="setLeadSort(this.value)">
+            <option value="created_desc">Сначала новые</option>
+            <option value="created_asc">Сначала старые</option>
+            <option value="last_message">По последнему сообщению</option>
+          </select>
+        </label>
+        <div class="list-period-caption" id="listPeriodCaption">Показаны лиды, добавленные за последние 30 дней</div>
+      </div>
       <div class="sidebar-funnel">
         <div class="rp-sec">Воронка статусов</div>
         <div class="funnel-list" id="sidebarFunnelList"></div>
@@ -94,12 +105,17 @@
     <div class="rp-title">Аналитика</div>
     <div class="rp-scroll">
       <div class="period-switcher" id="periodSwitcher">
-        <button type="button" class="period-btn active" data-period="month">Месяц</button>
-        <button type="button" class="period-btn" data-period="week">Неделя</button>
-        <button type="button" class="period-btn" data-period="prev_month">Прошлый месяц</button>
-        <button type="button" class="period-btn" data-period="quarter">Квартал</button>
-        <button type="button" class="period-btn" data-period="year">Год</button>
+        <button type="button" class="period-btn" data-period="7">7 дней</button>
+        <button type="button" class="period-btn active" data-period="30">30 дней</button>
+        <button type="button" class="period-btn" data-period="90">90 дней</button>
+        <button type="button" class="period-btn" data-period="all">Всё время</button>
+        <button type="button" class="period-btn" data-period="custom">Даты</button>
       </div>
+      <div class="period-custom" id="periodCustom" hidden>
+        <label>С <input type="date" id="periodFrom" onchange="setCustomPeriod()"></label>
+        <label>По <input type="date" id="periodTo" onchange="setCustomPeriod()"></label>
+      </div>
+      <p class="period-caption" id="periodCaption">Показаны лиды, добавленные за последние 30 дней. Этот период общий для списка, воронки и итогов.</p>
 
       <div>
         <div class="rp-sec">Виды работ</div>
@@ -126,6 +142,7 @@
 
       <div>
         <div class="rp-sec">Требуют внимания</div>
+        <p class="period-caption">Все активные лиды, период на этот список не действует.</p>
         <div id="alertsList"></div>
       </div>
 

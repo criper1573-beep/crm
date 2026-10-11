@@ -1,6 +1,7 @@
 # SQLite logic
 
 import json
+import re
 import sqlite3
 from pathlib import Path
 
@@ -195,6 +196,47 @@ def get_all_leads() -> list[dict]:
             lead["objects"] = []
             lead["effective_deal_amount"] = lead.get("deal_amount") or 0
     return leads_list
+
+
+_ISO_STAMP = re.compile(r"^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?")
+LEAD_SORTS = ("created_desc", "created_asc", "last_message")
+
+
+def _lead_stamp(value: str | None) -> str:
+    raw = (value or "").strip()
+    match = _ISO_STAMP.match(raw)
+    if not match:
+        return ""
+    hh = match.group(4) or "00"
+    mm = match.group(5) or "00"
+    ss = match.group(6) or "00"
+    return f"{match.group(1)}-{match.group(2)}-{match.group(3)} {hh}:{mm}:{ss}"
+
+
+def sort_leads(leads: list[dict], mode: str) -> list[dict]:
+    """Порядок списка. Не меняет записи, только возвращает новый список.
+
+    created_desc — created_at по убыванию, при равенстве id по убыванию.
+    created_asc — created_at по возрастанию, при равенстве id по возрастанию.
+    last_message — дата последнего сообщения по убыванию; без сообщений в конце.
+    """
+    rows = list(leads)
+
+    def lead_id(lead: dict) -> int:
+        try:
+            return int(lead.get("id") or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    if mode == "created_desc":
+        rows.sort(key=lambda lead: (_lead_stamp(lead.get("created_at")), lead_id(lead)), reverse=True)
+    elif mode == "created_asc":
+        rows.sort(key=lambda lead: (_lead_stamp(lead.get("created_at")) or "9999-99-99 99:99:99", lead_id(lead)))
+    elif mode == "last_message":
+        rows.sort(key=lambda lead: (_lead_stamp(lead.get("last_message_date")), lead_id(lead)), reverse=True)
+    else:
+        raise ValueError(mode)
+    return rows
 
 
 def get_lead_by_id(lead_id: int) -> dict | None:

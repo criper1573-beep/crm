@@ -444,7 +444,10 @@ const CRM_STORAGE_KEY = 'crm_state';
 let activeId = null;
 let activeTab = 'overview';
 let currentFilter = 'all';
-let currentPeriod = 'month';
+let currentPeriod = '30';
+let currentSort = 'created_desc';
+let periodFrom = '';
+let periodTo = '';
 let activeObjectId = null;
 let headerEditMode = false;
 
@@ -454,7 +457,6 @@ function saveState() {
       activeId,
       activeTab,
       currentFilter,
-      currentPeriod,
       activeObjectId,
     }));
   } catch (e) {}
@@ -465,7 +467,6 @@ function loadState() {
     const raw = sessionStorage.getItem(CRM_STORAGE_KEY);
     if (!raw) return;
     const s = JSON.parse(raw);
-    if (s.currentPeriod) currentPeriod = s.currentPeriod;
     if (s.currentFilter) currentFilter = s.currentFilter;
     if (s.activeId != null) activeId = s.activeId;
     if (s.activeTab) activeTab = s.activeTab;
@@ -473,23 +474,61 @@ function loadState() {
   } catch (e) {}
 }
 
-function getPeriodRange(periodKey) {
+const LIST_PREFS_KEY = 'crm_list_prefs';
+
+function todayYmd() {
   const today = new Date();
-  const y = today.getFullYear();
-  const m = today.getMonth();
-  const d = today.getDate();
-  const toStr = (date) => date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0');
-  let startDate;
-  let endDate = toStr(today);
-  if (periodKey === 'month') {
-    startDate = y + '-' + String(m + 1).padStart(2, '0') + '-01';
-  } else {
-    const daysBack = periodKey === 'week' ? 7 : periodKey === 'prev_month' ? 30 : periodKey === 'quarter' ? 90 : periodKey === 'year' ? 365 : 30;
-    const start = new Date(today);
-    start.setDate(start.getDate() - daysBack);
-    startDate = toStr(start);
-  }
-  return { startDate, endDate };
+  return today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+}
+
+function loadListPrefs() {
+  try {
+    const raw = localStorage.getItem(LIST_PREFS_KEY);
+    if (!raw) return;
+    const s = JSON.parse(raw);
+    if (s && LeadList.SORTS.indexOf(s.sort) >= 0) currentSort = s.sort;
+    if (s && LeadList.PERIODS.indexOf(s.period) >= 0) currentPeriod = s.period;
+    periodFrom = (s && s.from) || '';
+    periodTo = (s && s.to) || '';
+  } catch (e) {}
+}
+
+function saveListPrefs() {
+  try {
+    localStorage.setItem(LIST_PREFS_KEY, JSON.stringify({
+      sort: currentSort,
+      period: currentPeriod,
+      from: periodFrom,
+      to: periodTo,
+    }));
+  } catch (e) {}
+}
+
+function periodCaptionText() {
+  return LeadList.periodCaption(currentPeriod, periodFrom, periodTo, todayYmd());
+}
+
+function updatePeriodCaptions() {
+  const text = periodCaptionText();
+  const listCap = document.getElementById('listPeriodCaption');
+  const panelCap = document.getElementById('periodCaption');
+  if (listCap) listCap.textContent = text;
+  if (panelCap) panelCap.textContent = text + ' Этот период общий для списка, воронки и итогов.';
+}
+
+function syncListControls() {
+  document.querySelectorAll('#periodSwitcher .period-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.getAttribute('data-period') === currentPeriod);
+  });
+  const custom = document.getElementById('periodCustom');
+  if (custom) custom.hidden = currentPeriod !== 'custom';
+  const fromEl = document.getElementById('periodFrom');
+  const toEl = document.getElementById('periodTo');
+  if (fromEl && fromEl.value !== periodFrom) fromEl.value = periodFrom;
+  if (toEl && toEl.value !== periodTo) toEl.value = periodTo;
+  const sortEl = document.getElementById('leadSort');
+  if (sortEl && sortEl.value !== currentSort) sortEl.value = currentSort;
+  updatePeriodCaptions();
 }
 
 function lastContactToYmd(str) {
@@ -511,21 +550,41 @@ function getEffectiveLastContactYmd(lead) {
 }
 
 function getLeadsForPeriod() {
-  const { startDate, endDate } = getPeriodRange(currentPeriod);
-  return leads.filter(l => {
-    const dateYmd = getEffectiveLastContactYmd(l);
-    if (!dateYmd) return false;
-    return dateYmd >= startDate && dateYmd <= endDate;
-  });
+  const today = todayYmd();
+  return leads.filter(l => LeadList.leadMatchesCreatedPeriod(l, currentPeriod, periodFrom, periodTo, today));
 }
 
 function setPeriod(periodKey) {
+  if (LeadList.PERIODS.indexOf(periodKey) < 0) periodKey = '30';
   currentPeriod = periodKey;
-  document.querySelectorAll('.period-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.getAttribute('data-period') === periodKey);
-  });
-  saveState();
+  if (periodKey === 'custom' && !periodFrom && !periodTo) {
+    const today = todayYmd();
+    periodFrom = LeadList.addDays(today, -29);
+    periodTo = today;
+  }
+  saveListPrefs();
+  syncListControls();
   updateStats();
+  renderList();
+}
+
+function setCustomPeriod() {
+  const fromEl = document.getElementById('periodFrom');
+  const toEl = document.getElementById('periodTo');
+  periodFrom = fromEl ? fromEl.value : '';
+  periodTo = toEl ? toEl.value : '';
+  currentPeriod = 'custom';
+  saveListPrefs();
+  syncListControls();
+  updateStats();
+  renderList();
+}
+
+function setLeadSort(value) {
+  currentSort = LeadList.SORTS.indexOf(value) >= 0 ? value : 'created_desc';
+  saveListPrefs();
+  syncListControls();
+  renderList();
 }
 
 // ─── STATUS CONFIG ──────────────────────────────────────────
@@ -675,9 +734,10 @@ function updateStats() {
     })();
     return { ...l, _reason: reason };
   });
+  const alertSorted = LeadList.sortLeads(alertLeads, 'created_desc');
   const alertsEl = document.getElementById('alertsList');
   if (alertsEl) {
-    alertsEl.innerHTML = alertLeads.length ? alertLeads.map(l => {
+    alertsEl.innerHTML = alertSorted.length ? alertSorted.map(l => {
       const cfg = CONFIG.statuses && CONFIG.statuses[l.status];
       const color = (cfg && cfg.color) || 'var(--text2)';
       return `<button type="button" class="alert-item" onclick="openLead(${l.id})">
@@ -689,19 +749,29 @@ function updateStats() {
 }
 
 // ─── RENDER LIST ───────────────────────────────────────────
-function renderList() {
-  const q = document.getElementById('searchInput').value.toLowerCase();
-  const leadsInPeriod = currentFilter === 'all' ? leads : getLeadsForPeriod();
-  const filtered = leadsInPeriod.filter(l => {
+function visibleSortedLeads() {
+  const searchEl = document.getElementById('searchInput');
+  const q = searchEl ? searchEl.value.toLowerCase() : '';
+  const today = todayYmd();
+  const filtered = leads.filter(l => {
+    if (!LeadList.leadMatchesCreatedPeriod(l, currentPeriod, periodFrom, periodTo, today)) return false;
     const matchFilter = currentFilter === 'all' ||
       (CONFIG.statuses && currentFilter in CONFIG.statuses ? l.status === currentFilter : getStatusGroup(l.status) === currentFilter);
     const matchSearch = !q || (l.name || '').toLowerCase().includes(q) || (l.address || '').toLowerCase().includes(q) || (l.comment || '').toLowerCase().includes(q);
     return matchFilter && matchSearch;
   });
+  return LeadList.sortLeads(filtered, currentSort);
+}
+
+function renderList() {
+  const filtered = visibleSortedLeads();
 
   const el = document.getElementById('leadsList');
+  if (!el) return;
   if (!filtered.length) {
-    el.innerHTML = '<div class="empty-inline">Лидов нет</div>';
+    const q = (document.getElementById('searchInput') || {}).value || '';
+    const empty = q ? 'Ничего не найдено за выбранный период' : 'Нет лидов за выбранный период';
+    el.innerHTML = '<div class="empty-inline">' + escapeHtml(empty) + '</div>';
     return;
   }
   el.innerHTML = filtered.map(l => {
@@ -1887,14 +1957,16 @@ async function init() {
   });
   initFileDropZone();
   loadState();
+  loadListPrefs();
   const raw = await apiGetLeads();
   leads = (raw || []).map(mapLeadFromApi);
-  setPeriod(currentPeriod);
+  syncListControls();
   setFilter(currentFilter);
   if (activeId != null && leads.some(l => l.id === activeId)) {
     renderDetail();
-  } else if (leads.length) {
-    openLead(leads[0].id);
+  } else {
+    const visible = visibleSortedLeads();
+    if (visible.length) openLead(visible[0].id);
   }
 }
 if (document.readyState === 'loading') {

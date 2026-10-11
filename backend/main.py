@@ -6,7 +6,7 @@ from pathlib import Path
 
 from urllib.parse import quote
 
-from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -95,11 +95,23 @@ def health():
 
 
 @app.get("/api/leads")
-def list_leads():
+def list_leads(
+    sort: str | None = Query(
+        default=None,
+        description=(
+            "Необязательная сортировка: created_desc (новые сверху), created_asc (старые сверху), "
+            "last_message (свежая переписка сверху). Без параметра порядок прежний — по id по возрастанию."
+        ),
+    ),
+):
     leads = database.get_all_leads()
     counts = lead_files.counts_by_lead()
     for lead in leads:
         lead["files_count"] = counts.get(lead["id"], 0)
+    if sort:
+        if sort not in database.LEAD_SORTS:
+            raise HTTPException(status_code=400, detail="Unknown sort")
+        leads = database.sort_leads(leads, sort)
     return leads
 
 

@@ -42,6 +42,8 @@ def init_table() -> None:
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_lead_files_lead ON lead_files(lead_id)")
+        database.install_lead_file_triggers(conn)
+        database.backfill_updated_at_from_files(conn)
         conn.commit()
 
 

@@ -1,14 +1,20 @@
 # FastAPI app
 
+import gzip
 import logging
+import os
+import secrets
+import shutil
+import tempfile
 from datetime import datetime as _dt
 from pathlib import Path
 
 from urllib.parse import quote
 
-from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 
 from backend import database
@@ -18,6 +24,41 @@ from backend import avito
 from backend import files as lead_files
 
 app = FastAPI()
+_basic = HTTPBasic()
+
+
+def require_basic(credentials: HTTPBasicCredentials = Depends(_basic)) -> None:
+    """Та же HTTP Basic, что у остального API.
+
+    Nginx уже проверяет пароль и передаёт Authorization в uvicorn.
+    Без заголовка — 401. Если заданы CRM_BASIC_USER и CRM_BASIC_PASSWORD,
+    пароль проверяется ещё раз в приложении (прямой заход на uvicorn).
+    """
+    if not credentials.username:
+        raise HTTPException(status_code=401, detail="Not authenticated", headers={"WWW-Authenticate": "Basic"})
+    expected_user = os.environ.get("CRM_BASIC_USER", "")
+    expected_password = os.environ.get("CRM_BASIC_PASSWORD", "")
+    if not expected_user and not expected_password:
+        return
+    user_ok = secrets.compare_digest(credentials.username, expected_user)
+    password_ok = secrets.compare_digest(credentials.password, expected_password)
+    if not (user_ok and password_ok):
+        raise HTTPException(status_code=401, detail="Not authenticated", headers={"WWW-Authenticate": "Basic"})
+
+
+def _stream_unlink(path: str):
+    try:
+        with open(path, "rb") as handle:
+            while True:
+                chunk = handle.read(1024 * 1024)
+                if not chunk:
+                    break
+                yield chunk
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
 
 # CORS для локального фронтенда
 app.add_middleware(
@@ -94,6 +135,51 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/api/admin/backup")
+def admin_backup(
+    gzip_on: bool = Query(default=False, alias="gzip", description="1 — отдать снимок в gzip"),
+    _: None = Depends(require_basic),
+):
+    """Согласованный снимок SQLite через online backup API. Временный файл стримится и удаляется."""
+    fd, raw_path = tempfile.mkstemp(prefix="crm-backup-", suffix=".db")
+    os.close(fd)
+    owned = [raw_path]
+    try:
+        database.backup_sqlite(raw_path)
+        stream_path = raw_path
+        filename = "crm.db"
+        media = "application/octet-stream"
+        if gzip_on:
+            gz_path = raw_path + ".gz"
+            owned.append(gz_path)
+            with open(raw_path, "rb") as src, gzip.open(gz_path, "wb", compresslevel=1) as dst:
+                shutil.copyfileobj(src, dst, length=1024 * 1024)
+            os.unlink(raw_path)
+            owned.remove(raw_path)
+            stream_path = gz_path
+            filename = "crm.db.gz"
+            media = "application/gzip"
+        size = os.path.getsize(stream_path)
+        logging.getLogger("backend.main").info("backup ready gzip=%s bytes=%s", gzip_on, size)
+        response = StreamingResponse(
+            _stream_unlink(stream_path),
+            media_type=media,
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Cache-Control": "no-store",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+        owned.remove(stream_path)
+        return response
+    finally:
+        for item in owned:
+            try:
+                os.unlink(item)
+            except OSError:
+                pass
+
+
 @app.get("/api/leads")
 def list_leads(
     sort: str | None = Query(
@@ -113,6 +199,30 @@ def list_leads(
             raise HTTPException(status_code=400, detail="Unknown sort")
         leads = database.sort_leads(leads, sort)
     return leads
+
+
+@app.get("/api/leads/export")
+def export_leads(
+    updated_since: str | None = Query(
+        default=None,
+        description="ISO datetime. Лиды, у которых updated_at или любая вложенная строка новее",
+    ),
+    include: str | None = Query(
+        default=None,
+        description="Ограничить вложения: notes,objects,messages,files,payments. Пусто — все",
+    ),
+    _: None = Depends(require_basic),
+):
+    """Все лиды одним ответом. Вложения собираются пачкой, по одному запросу на таблицу."""
+    try:
+        since = database.normalize_since(updated_since)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Bad updated_since") from None
+    try:
+        chosen = database.parse_include(include)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Bad include") from None
+    return database.export_leads(since, chosen)
 
 
 @app.get("/api/leads/{lead_id}")

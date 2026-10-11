@@ -3,6 +3,7 @@
 import json
 import re
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 
 from backend.models import Lead, LeadObject, LeadObjectCreate, NoteCreate, MessageCreate, MessageBulkItem
@@ -14,6 +15,8 @@ DB_PATH = Path(__file__).resolve().parent.parent / "data" / "crm.db"
 def get_connection() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    # Триггер updated_at сам делает UPDATE leads. Рекурсия зациклила бы его.
+    conn.execute("PRAGMA recursive_triggers = OFF")
     return conn
 
 
@@ -127,6 +130,7 @@ def init_db() -> None:
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_payments_lead ON payments(lead_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_payments_paid ON payments(paid_at)")
+        _ensure_change_tracking(conn)
         conn.commit()
 
 
@@ -1041,3 +1045,263 @@ def sync_created_at_from_last_contact() -> int:
             updated += 1
         conn.commit()
     return updated
+
+
+_TOUCH_TABLES = ("notes", "lead_objects", "messages", "payments")
+EXPORT_RELATIONS = ("notes", "objects", "messages", "files", "payments")
+_SINCE_RE = re.compile(
+    r"^(\d{4})-(\d{2})-(\d{2})(?: (\d{2}):(\d{2})(?::(\d{2}))?)?$"
+)
+
+
+def _install_touch_triggers(conn: sqlite3.Connection, table: str) -> None:
+    """Любое изменение вложенной строки двигает leads.updated_at. Рекурсия выключена."""
+    for action, suffix, lead_ref in (
+        ("INSERT", "ins", "NEW.lead_id"),
+        ("UPDATE", "upd", "NEW.lead_id"),
+        ("DELETE", "del", "OLD.lead_id"),
+    ):
+        conn.execute(
+            f"""
+            CREATE TRIGGER IF NOT EXISTS trg_{table}_{suffix}_touch
+            AFTER {action} ON {table}
+            BEGIN
+                UPDATE leads SET updated_at = datetime('now') WHERE id = {lead_ref};
+            END
+            """
+        )
+
+
+def _ensure_change_tracking(conn: sqlite3.Connection) -> None:
+    """Аддитивно: leads.updated_at и триггеры. Существующие строки не переписываются, если штамп уже есть."""
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(leads)")]
+    if "updated_at" not in cols:
+        conn.execute("ALTER TABLE leads ADD COLUMN updated_at TEXT")
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_leads_set_updated
+        AFTER UPDATE ON leads
+        WHEN NEW.updated_at IS OLD.updated_at
+        BEGIN
+            UPDATE leads SET updated_at = datetime('now') WHERE id = NEW.id;
+        END
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_leads_set_updated_ins
+        AFTER INSERT ON leads
+        WHEN NEW.updated_at IS NULL
+        BEGIN
+            UPDATE leads SET updated_at = datetime('now') WHERE id = NEW.id;
+        END
+        """
+    )
+    for table in _TOUCH_TABLES:
+        _install_touch_triggers(conn, table)
+    if "created_at" in cols:
+        conn.execute(
+            """
+            UPDATE leads
+            SET updated_at = COALESCE(NULLIF((
+                SELECT MAX(ts) FROM (
+                    SELECT created_at AS ts FROM leads AS self WHERE self.id = leads.id
+                    UNION ALL
+                    SELECT created_at FROM notes WHERE lead_id = leads.id
+                    UNION ALL
+                    SELECT created_at FROM messages WHERE lead_id = leads.id
+                    UNION ALL
+                    SELECT created_at FROM payments WHERE lead_id = leads.id
+                )
+            ), ''), datetime('now'))
+            WHERE updated_at IS NULL OR updated_at = ''
+            """
+        )
+    else:
+        conn.execute(
+            "UPDATE leads SET updated_at = datetime('now') WHERE updated_at IS NULL OR updated_at = ''"
+        )
+
+
+def install_lead_file_triggers(conn: sqlite3.Connection) -> None:
+    _install_touch_triggers(conn, "lead_files")
+
+
+def backfill_updated_at_from_files(conn: sqlite3.Connection) -> None:
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(leads)")]
+    if "updated_at" not in cols:
+        return
+    conn.execute(
+        """
+        UPDATE leads
+        SET updated_at = (
+            SELECT MAX(created_at) FROM lead_files WHERE lead_id = leads.id
+        )
+        WHERE EXISTS (
+            SELECT 1 FROM lead_files
+            WHERE lead_id = leads.id
+              AND created_at IS NOT NULL
+              AND created_at > COALESCE(leads.updated_at, '')
+        )
+        """
+    )
+
+
+def backup_sqlite(dest_path: str) -> None:
+    """Согласованный снимок через online backup API: source.backup(dest). Файл назначения закрывается до возврата."""
+    source = sqlite3.connect(str(DB_PATH), timeout=30)
+    dest = sqlite3.connect(dest_path)
+    try:
+        source.backup(dest)
+        dest.commit()
+    finally:
+        dest.close()
+        source.close()
+
+
+def normalize_since(value: str | None) -> str | None:
+    """ISO-дата или datetime → 'YYYY-MM-DD HH:MM:SS'. Пустое значение — без фильтра."""
+    if value is None or not str(value).strip():
+        return None
+    raw = str(value).strip().replace("T", " ")
+    if raw.endswith("Z"):
+        raw = raw[:-1]
+    raw = re.sub(r"[+-]\d{2}:?\d{2}$", "", raw)
+    raw = re.sub(r"\.\d+$", "", raw)
+    match = _SINCE_RE.match(raw)
+    if not match:
+        raise ValueError("bad since")
+    year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
+    hour = int(match.group(4) or 0)
+    minute = int(match.group(5) or 0)
+    second = int(match.group(6) or 0)
+    try:
+        datetime(year, month, day, hour, minute, second)
+    except ValueError:
+        raise ValueError("bad since") from None
+    return f"{year:04d}-{month:02d}-{day:02d} {hour:02d}:{minute:02d}:{second:02d}"
+
+
+def parse_include(value: str | None) -> frozenset[str]:
+    """Пусто — все вложенные наборы. Иначе список из notes,objects,messages,files,payments."""
+    if value is None or not str(value).strip():
+        return frozenset(EXPORT_RELATIONS)
+    parts = [part.strip() for part in str(value).split(",") if part.strip()]
+    if not parts or any(part not in EXPORT_RELATIONS for part in parts):
+        raise ValueError("bad include")
+    return frozenset(parts)
+
+
+def _stamp_ge(value, since: str) -> bool:
+    stamp = _lead_stamp(value if isinstance(value, str) else ("" if value is None else str(value)))
+    return bool(stamp) and stamp >= since
+
+
+def _lead_changed(lead: dict, updated_at, bucket: dict, since: str) -> bool:
+    if _stamp_ge(updated_at, since) or _stamp_ge(lead.get("created_at"), since):
+        return True
+    for name in ("notes", "messages", "files", "payments", "objects"):
+        for item in bucket.get(name, []):
+            if _stamp_ge(item.get("created_at"), since) or _stamp_ge(item.get("updated_at"), since):
+                return True
+    return False
+
+
+def export_leads(since: str | None, include: frozenset[str]) -> list[dict]:
+    """Все лиды одним проходом: один SELECT на таблицу, группировка в Python.
+
+    since — уже нормализованный штамп. include — какие вложенные списки класть в ответ.
+    Фильтр updated_since смотрит leads.updated_at и штампы вложенных строк, даже если набор не отдан.
+    """
+    relations = EXPORT_RELATIONS
+    need = {name: since is not None or name in include for name in relations}
+    from backend import files as lead_files
+
+    with get_connection() as conn:
+        leads = []
+        stamps: dict[int, str | None] = {}
+        grouped: dict[int, dict[str, list]] = {}
+        rows = conn.execute(
+            """
+            SELECT id, name, phone, extra_phones, avito_link, max_link, tg_link, address,
+                   object_type, budget, status, last_contact, comment, work_types, description,
+                   deal_amount, communication_done, has_multiple_objects, avito_chat_id,
+                   avito_new_chat, created_at, updated_at
+            FROM leads ORDER BY id
+            """
+        ).fetchall()
+        for row in rows:
+            lead = _lead_row_to_dict(row)
+            lead_id = lead["id"]
+            stamps[lead_id] = lead.pop("updated_at", None)
+            grouped[lead_id] = {name: [] for name in relations}
+            leads.append(lead)
+
+        if need["notes"]:
+            for row in conn.execute(
+                """
+                SELECT id, lead_id, lead_object_id, text, created_at
+                FROM notes ORDER BY lead_id, created_at DESC, id DESC
+                """
+            ):
+                item = _row_to_dict(row)
+                bucket = grouped.get(item["lead_id"])
+                if bucket is not None:
+                    bucket["notes"].append(item)
+        if need["objects"]:
+            for row in conn.execute(
+                """
+                SELECT id, lead_id, name, address, object_type, budget, work_types, description,
+                       deal_amount, last_contact, sort_order
+                FROM lead_objects ORDER BY lead_id, sort_order, id
+                """
+            ):
+                item = _lead_object_row_to_dict(row)
+                bucket = grouped.get(item["lead_id"])
+                if bucket is not None:
+                    bucket["objects"].append(item)
+        if need["messages"]:
+            for row in conn.execute(
+                """
+                SELECT id, lead_id, text, direction, source, created_at, avito_message_id
+                FROM messages ORDER BY lead_id, created_at ASC, id ASC
+                """
+            ):
+                item = _row_to_dict(row)
+                bucket = grouped.get(item["lead_id"])
+                if bucket is not None:
+                    bucket["messages"].append(item)
+        if need["payments"]:
+            for row in conn.execute(
+                """
+                SELECT id, lead_id, object_id, paid_at, amount, note, source, external_id, created_at
+                FROM payments ORDER BY lead_id, paid_at DESC, id DESC
+                """
+            ):
+                item = _payment_row(row)
+                bucket = grouped.get(item["lead_id"])
+                if bucket is not None:
+                    bucket["payments"].append(item)
+        if need["files"]:
+            try:
+                file_rows = conn.execute(
+                    "SELECT * FROM lead_files ORDER BY lead_id, created_at DESC, id DESC"
+                ).fetchall()
+            except sqlite3.OperationalError:
+                file_rows = []
+            for row in file_rows:
+                item = lead_files._row(row)
+                bucket = grouped.get(item["lead_id"])
+                if bucket is not None:
+                    bucket["files"].append(item)
+
+    result = []
+    for lead in leads:
+        bucket = grouped[lead["id"]]
+        if since is not None and not _lead_changed(lead, stamps.get(lead["id"]), bucket, since):
+            continue
+        for name in relations:
+            if name in include:
+                lead[name] = bucket[name]
+        result.append(lead)
+    return result

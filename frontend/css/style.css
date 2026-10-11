@@ -938,6 +938,16 @@ input[type="file"] { min-height: 0; }
   text-align: right;
   white-space: nowrap;
 }
+.stat-deals-block {
+  margin-top: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.stat-deals-val { font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 .alert-item {
   display: block;
@@ -1237,4 +1247,39 @@ td.num, th.num { text-align: right; white-space: nowrap; }
 .crm-toast.show {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
+}
+.payments-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.payments-head .overview-block-title { margin-bottom: 0; }
+.payments-total, .payments-loose { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.payments-loose { margin: 8px 0 4px; }
+.payments-list { display: flex; flex-direction: column; gap: 6px; }
+.payment-item {
+  display: grid;
+  grid-template-columns: 92px minmax(90px, auto) 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 8px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.payment-date { font-variant-numeric: tabular-nums; }
+.payment-amount { font-weight: 700; white-space: nowrap; }
+.payment-note { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.payments-add { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.payments-add input {
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+}
+.payments-add input[type="date"] { min-width: 140px; }
+.payments-add .money-input { width: 120px; }
+.payments-add input[type="text"]:last-of-type { flex: 1; min-width: 120px; }
+@media (max-width: 768px) {
+  .payment-item { grid-template-columns: 1fr 1fr auto auto; }
+  .payment-note { grid-column: 1 / -1; }
 }

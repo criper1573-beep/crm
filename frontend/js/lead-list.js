@@ -5,7 +5,8 @@
   else root.LeadList = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   var SORTS = ['created_desc', 'created_asc', 'last_message'];
-  var PERIODS = ['7', '30', '90', 'all', 'custom'];
+  var PERIODS = ['week', 'month', 'prev_month', 'quarter', 'year', 'all', 'custom'];
+  var PERIOD_ALIASES = { '7': 'week', '30': 'month', '90': 'quarter' };
 
   function pad(n) { return String(n).padStart(2, '0'); }
 
@@ -26,13 +27,25 @@
     return m ? (m[3] + '.' + m[2] + '.' + m[1]) : '';
   }
 
-  function leadCreatedYmd(lead) {
-    var raw = String((lead && lead.created_at) || '').trim();
-    var iso = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  function parseYmd(raw) {
+    var s = String(raw || '').trim();
+    var iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
     if (iso) return iso[1] + '-' + pad(iso[2]) + '-' + pad(iso[3]);
-    var dmy = raw.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})/);
+    var dmy = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:\D|$)/);
     if (dmy) return dmy[3] + '-' + pad(dmy[2]) + '-' + pad(dmy[1]);
+    var shortY = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{2})(?:\D|$)/);
+    if (shortY) return String(2000 + Number(shortY[3])) + '-' + pad(shortY[2]) + '-' + pad(shortY[1]);
     return '';
+  }
+
+  function leadCreatedYmd(lead) {
+    return parseYmd(lead && lead.created_at);
+  }
+
+  function canonicalPeriod(period) {
+    if (PERIOD_ALIASES[period]) return PERIOD_ALIASES[period];
+    if (PERIODS.indexOf(period) >= 0) return period;
+    return 'month';
   }
 
   function stamp(value) {
@@ -50,13 +63,32 @@
     return isFinite(id) ? id : 0;
   }
 
-  function createdPeriodRange(period, from, to, today) {
-    var key = PERIODS.indexOf(period) >= 0 ? period : '30';
-    if (key === 'all') return { start: '', end: '' };
-    if (key === '7' || key === '30' || key === '90') {
-      var n = Number(key);
-      return { start: addDays(today, -(n - 1)), end: today };
+  function previousCalendarMonth(today) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(today || '');
+    if (!m) return { start: '', end: '' };
+    var year = Number(m[1]);
+    var month = Number(m[2]);
+    var prevMonth = month - 1;
+    var prevYear = year;
+    if (prevMonth < 1) {
+      prevMonth = 12;
+      prevYear -= 1;
     }
+    var endDate = new Date(prevYear, prevMonth, 0);
+    return {
+      start: prevYear + '-' + pad(prevMonth) + '-01',
+      end: formatYmd(endDate),
+    };
+  }
+
+  function periodRange(period, from, to, today) {
+    var key = canonicalPeriod(period);
+    if (key === 'all') return { start: '', end: '' };
+    if (key === 'week') return { start: addDays(today, -6), end: today };
+    if (key === 'month') return { start: addDays(today, -29), end: today };
+    if (key === 'quarter') return { start: addDays(today, -89), end: today };
+    if (key === 'year') return { start: addDays(today, -364), end: today };
+    if (key === 'prev_month') return previousCalendarMonth(today);
     var start = from || '';
     var end = to || '';
     if (start && end && start > end) {
@@ -67,28 +99,89 @@
     return { start: start, end: end };
   }
 
-  function leadMatchesCreatedPeriod(lead, period, from, to, today) {
-    var key = PERIODS.indexOf(period) >= 0 ? period : '30';
-    if (key === 'all') return true;
-    var ymd = leadCreatedYmd(lead);
+  function createdPeriodRange(period, from, to, today) {
+    return periodRange(period, from, to, today);
+  }
+
+  function ymdInRange(ymd, start, end) {
     if (!ymd) return false;
-    var range = createdPeriodRange(key, from, to, today);
-    if (range.start && ymd < range.start) return false;
-    if (range.end && ymd > range.end) return false;
+    if (start && ymd < start) return false;
+    if (end && ymd > end) return false;
     return true;
   }
 
+  function leadMatchesCreatedPeriod(lead, period, from, to, today) {
+    if (canonicalPeriod(period) === 'all') return true;
+    var ymd = leadCreatedYmd(lead);
+    if (!ymd) return false;
+    var range = periodRange(period, from, to, today);
+    return ymdInRange(ymd, range.start, range.end);
+  }
+
   function periodCaption(period, from, to, today) {
-    var key = PERIODS.indexOf(period) >= 0 ? period : '30';
+    var key = canonicalPeriod(period);
+    var range = periodRange(key, from, to, today);
     if (key === 'all') return 'Показаны лиды, добавленные за всё время';
     if (key === 'custom') {
-      var range = createdPeriodRange('custom', from, to, today);
       if (range.start && range.end) return 'Показаны лиды, добавленные с ' + ymdToDmy(range.start) + ' по ' + ymdToDmy(range.end);
       if (range.start) return 'Показаны лиды, добавленные с ' + ymdToDmy(range.start);
       if (range.end) return 'Показаны лиды, добавленные по ' + ymdToDmy(range.end);
       return 'Укажите даты добавления лида';
     }
-    return 'Показаны лиды, добавленные за последние ' + key + ' дней';
+    if (key === 'prev_month' && range.start && range.end) {
+      return 'Показаны лиды, добавленные за прошлый месяц (' + ymdToDmy(range.start) + '–' + ymdToDmy(range.end) + ')';
+    }
+    var days = { week: '7', month: '30', quarter: '90', year: '365' };
+    return 'Показаны лиды, добавленные за последние ' + (days[key] || '30') + ' дней';
+  }
+
+  function dealAmount(lead) {
+    if (lead && lead.has_multiple_objects && lead.objects && lead.objects.length) {
+      return lead.objects.reduce(function (sum, obj) { return sum + (Number(obj.deal_amount) || 0); }, 0);
+    }
+    return Number(lead && lead.deal_amount) || 0;
+  }
+
+  function leadInWonPeriod(lead, period, from, to, today) {
+    var status = lead && lead.status;
+    if (status !== 'client' && status !== 'repeat') return false;
+    var range = periodRange(period, from, to, today);
+    var payments = (lead && lead.payments) || [];
+    var paidIn = false;
+    for (var i = 0; i < payments.length; i++) {
+      if (ymdInRange(parseYmd(payments[i] && payments[i].paid_at), range.start, range.end)) paidIn = true;
+    }
+    if (paidIn) return true;
+    if (payments.length) return false;
+    return ymdInRange(leadCreatedYmd(lead), range.start, range.end);
+  }
+
+  function sumPayments(leads, period, from, to, today) {
+    var range = periodRange(period, from, to, today);
+    var sum = 0;
+    (leads || []).forEach(function (lead) {
+      ((lead && lead.payments) || []).forEach(function (payment) {
+        if (ymdInRange(parseYmd(payment && payment.paid_at), range.start, range.end)) sum += Number(payment.amount) || 0;
+      });
+    });
+    return sum;
+  }
+
+  function sumDealAmounts(leads, period, from, to, today) {
+    return (leads || []).reduce(function (sum, lead) {
+      return sum + (leadInWonPeriod(lead, period, from, to, today) ? dealAmount(lead) : 0);
+    }, 0);
+  }
+
+  function countWon(leads, period, from, to, today) {
+    var clients = 0;
+    var repeats = 0;
+    (leads || []).forEach(function (lead) {
+      if (!leadInWonPeriod(lead, period, from, to, today)) return;
+      if (lead.status === 'client') clients += 1;
+      else if (lead.status === 'repeat') repeats += 1;
+    });
+    return { clients: clients, repeats: repeats };
   }
 
   function compareCreatedDesc(a, b) {
@@ -196,6 +289,13 @@
     createdPeriodRange: createdPeriodRange,
     leadMatchesCreatedPeriod: leadMatchesCreatedPeriod,
     periodCaption: periodCaption,
+    canonicalPeriod: canonicalPeriod,
+    periodRange: periodRange,
+    parseYmd: parseYmd,
+    sumPayments: sumPayments,
+    sumDealAmounts: sumDealAmounts,
+    countWon: countWon,
+    leadInWonPeriod: leadInWonPeriod,
     sortLeads: sortLeads,
     parseLeadHash: parseLeadHash,
     leadHash: leadHash,

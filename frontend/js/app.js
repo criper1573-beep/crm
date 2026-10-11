@@ -29,6 +29,7 @@ function mapLeadFromApi(l) {
     msgs: l.msgs ?? [],
     avito_chat_id: l.avito_chat_id ?? null,
     avito_new_chat: !!l.avito_new_chat,
+    payments: Array.isArray(l.payments) ? l.payments : [],
   };
 }
 
@@ -78,6 +79,7 @@ function updateStatusInUI(leadId, newStatus) {
     row.className = classes.concat(si.side || 's-drain').join(' ');
   }
   updateStats();
+  if (leadId === activeId) renderDetail();
 }
 
 function getLeadPayloadForUpdate(l, overrides = {}) {
@@ -439,7 +441,7 @@ const CRM_STORAGE_KEY = 'crm_state';
 let activeId = null;
 let activeTab = 'overview';
 let currentFilter = 'all';
-let currentPeriod = '30';
+let currentPeriod = 'month';
 let currentSort = 'created_desc';
 let periodFrom = '';
 let periodTo = '';
@@ -482,7 +484,7 @@ function loadListPrefs() {
     if (!raw) return;
     const s = JSON.parse(raw);
     if (s && LeadList.SORTS.indexOf(s.sort) >= 0) currentSort = s.sort;
-    if (s && LeadList.PERIODS.indexOf(s.period) >= 0) currentPeriod = s.period;
+    if (s && s.period) currentPeriod = LeadList.canonicalPeriod(s.period);
     periodFrom = (s && s.from) || '';
     periodTo = (s && s.to) || '';
   } catch (e) {}
@@ -508,7 +510,7 @@ function updatePeriodCaptions() {
   const listCap = document.getElementById('listPeriodCaption');
   const panelCap = document.getElementById('periodCaption');
   if (listCap) listCap.textContent = text;
-  if (panelCap) panelCap.textContent = text + ' Этот период общий для списка, воронки и итогов.';
+  if (panelCap) panelCap.textContent = text + ' Выручка считается по дате платежа. Список лидов — по дате добавления.';
 }
 
 function syncListControls() {
@@ -527,13 +529,7 @@ function syncListControls() {
 }
 
 function lastContactToYmd(str) {
-  if (!str || typeof str !== 'string') return '';
-  const s = str.trim();
-  const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-  if (iso) return iso[1] + '-' + iso[2].padStart(2, '0') + '-' + iso[3].padStart(2, '0');
-  const dmy = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})/);
-  if (dmy) return dmy[3] + '-' + dmy[2].padStart(2, '0') + '-' + dmy[1].padStart(2, '0');
-  return '';
+  return LeadList.parseYmd(str);
 }
 
 function getEffectiveLastContactYmd(lead) {
@@ -550,7 +546,7 @@ function getLeadsForPeriod() {
 }
 
 function setPeriod(periodKey) {
-  if (LeadList.PERIODS.indexOf(periodKey) < 0) periodKey = '30';
+  periodKey = LeadList.canonicalPeriod(periodKey);
   currentPeriod = periodKey;
   if (periodKey === 'custom' && !periodFrom && !periodTo) {
     const today = todayYmd();
@@ -617,23 +613,22 @@ function updateStats() {
   const leadsForPeriod = getLeadsForPeriod();
   const periodGroups = {hot:0,client:0,repeat:0,drain:0,sql:0};
   leadsForPeriod.forEach(l => { const g = getStatusGroup(l.status); if(periodGroups[g]!==undefined) periodGroups[g]++; });
+  const today = todayYmd();
+  const won = LeadList.countWon(leads, currentPeriod, periodFrom, periodTo, today);
   document.getElementById('cntHot').textContent = periodGroups.hot;
-  document.getElementById('cntClient').textContent = periodGroups.client;
+  document.getElementById('cntClient').textContent = won.clients;
   document.getElementById('cntAll').textContent = leadsForPeriod.length;
   document.getElementById('s1').textContent = periodGroups.hot;
-  document.getElementById('s2').textContent = periodGroups.client;
-  document.getElementById('s3').textContent = periodGroups.repeat + periodGroups.sql;
+  document.getElementById('s2').textContent = won.clients;
+  document.getElementById('s3').textContent = won.repeats + periodGroups.sql;
   document.getElementById('s4').textContent = periodGroups.drain;
 
-  const revenueLeads = leadsForPeriod.filter(l => l.status === 'client' || l.status === 'repeat');
-  const revenue = revenueLeads.reduce((sum, l) => {
-    const v = (l.has_multiple_objects && l.objects && l.objects.length)
-      ? (l.objects || []).reduce((s, o) => s + (Number(o.deal_amount) || 0), 0)
-      : (Number(l.deal_amount) || 0);
-    return sum + v;
-  }, 0);
+  const revenue = LeadList.sumPayments(leads, currentPeriod, periodFrom, periodTo, today);
+  const deals = LeadList.sumDealAmounts(leads, currentPeriod, periodFrom, periodTo, today);
   const revenueEl = document.getElementById('revenueTotal');
   if (revenueEl) revenueEl.textContent = formatDealAmount(revenue) || ('0\u00A0₽');
+  const dealsEl = document.getElementById('dealsTotal');
+  if (dealsEl) dealsEl.textContent = formatDealAmount(deals) || ('0\u00A0₽');
 
   // funnel in sidebar: counts by selected period (same as analytics)
   const sfl = document.getElementById('sidebarFunnelList');
@@ -1466,7 +1461,7 @@ function renderOverview(l) {
         <div class="ai-field" id="cardField-${leadId}-${objectId || 'l'}-budget"><div class="aif-label">Бюджет</div><select class="aif-edit-select" onchange="updateOverviewField(${leadId}, ${objectId || 'null'}, 'budget', this.value)">${budgetOpts}</select></div>
         <div class="ai-field" id="cardField-${leadId}-${objectId || 'l'}-object_type"><div class="aif-label">Тип объекта</div><select class="aif-edit-select" onchange="updateOverviewField(${leadId}, ${objectId || 'null'}, 'object_type', this.value)">${objectOpts}</select></div>
         <div class="ai-field" id="cardField-${leadId}-${objectId || 'l'}-address"><div class="aif-label">Адрес</div><input type="text" class="aif-edit-input" value="${escapeHtml(data.address || '')}" placeholder="Адрес" onblur="updateOverviewField(${leadId}, ${objectId || 'null'}, 'address', this.value)"></div>
-        <div class="ai-field" id="cardField-${leadId}-${objectId != null ? objectId : 'l'}-last_contact"><div class="aif-label">Последний контакт</div><input type="text" class="aif-edit-input" value="${escapeHtml(data.last_contact || data.date || l.last_contact || l.date || '')}" placeholder="ГГГГ-ММ-ДД или ДД.ММ.ГГГГ" data-lead-id="${leadId}" data-object-id="${objectId != null ? objectId : ''}" onblur="saveLastContactOnBlur(this)" title="Меняйте дату, чтобы убрать из выбранного периода аналитики"></div>
+        <div class="ai-field" id="cardField-${leadId}-${objectId != null ? objectId : 'l'}-last_contact"><div class="aif-label">Последний контакт</div><input type="text" class="aif-edit-input" value="${escapeHtml(data.last_contact || data.date || l.last_contact || l.date || '')}" placeholder="ГГГГ-ММ-ДД или ДД.ММ.ГГГГ" data-lead-id="${leadId}" data-object-id="${objectId != null ? objectId : ''}" onblur="saveLastContactOnBlur(this)"></div>
         ${dealAmountRowWithId}
         <div class="ai-field ai-field-toggle" id="cardField-${leadId}-communication_done">
           <div class="aif-label">Завершил общение</div>
@@ -1481,6 +1476,8 @@ function renderOverview(l) {
       <textarea class="overview-description-ta" id="descriptionTa-${leadId}-${objectId || 'l'}" placeholder="Добавьте описание проекта или нажмите Обновить" data-lead-id="${leadId}" data-object-id="${objectId || ''}">${escapeHtml(data.description || '')}</textarea>
       <button type="button" class="dbtn" id="btnSummarize-${leadId}" style="margin-top:8px" onclick="requestLeadSummary(${leadId})">Обновить из переписки и заметок</button>
     </div>
+
+    ${showDealAmount ? renderPaymentsBlock(l, objectId, data.deal_amount) : ''}
 
     ${renderFilesBlock(l)}
 
@@ -2118,6 +2115,147 @@ function formatFileDate(createdAt) {
 function fileExt(name) {
   const m = String(name || '').match(/\.([A-Za-z0-9]{1,5})$/);
   return m ? m[1].toUpperCase() : 'FILE';
+}
+
+function paymentView(l, objectId) {
+  const all = Array.isArray(l.payments) ? l.payments.slice() : [];
+  all.sort((a, b) => {
+    if (a.paid_at !== b.paid_at) return a.paid_at < b.paid_at ? 1 : -1;
+    return (b.id || 0) - (a.id || 0);
+  });
+  if (l.has_multiple_objects && objectId != null) {
+    return {
+      rows: all.filter(p => p.object_id === objectId),
+      loose: all.filter(p => p.object_id == null),
+    };
+  }
+  return { rows: all, loose: [] };
+}
+
+function formatPayDate(ymd) {
+  const parsed = LeadList.parseYmd(ymd);
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(parsed || '');
+  return m ? (m[3] + '.' + m[2] + '.' + m[1]) : (ymd || '');
+}
+
+function renderPaymentRow(leadId, payment) {
+  return `<div class="payment-item" id="paymentItem-${payment.id}">
+    <div class="payment-date">${escapeHtml(formatPayDate(payment.paid_at))}</div>
+    <div class="payment-amount">${escapeHtml(formatDealAmount(payment.amount) || '0\u00A0₽')}</div>
+    <div class="payment-note">${escapeHtml(payment.note || '')}</div>
+    <button type="button" class="file-btn" title="Изменить" onclick="startEditPayment(${leadId}, ${payment.id})">✎</button>
+    <button type="button" class="file-btn file-btn-del" title="Удалить" onclick="deletePayment(${leadId}, ${payment.id})">×</button>
+  </div>`;
+}
+
+function renderPaymentsBlock(l, objectId, dealAmount) {
+  const view = paymentView(l, objectId);
+  const paid = view.rows.reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0);
+  const loosePaid = view.loose.reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0);
+  const suffix = objectId != null ? objectId : 'l';
+  const dealText = formatDealAmount(dealAmount) || '0\u00A0₽';
+  const looseHtml = view.loose.length
+    ? `<div class="payments-loose">Без привязки к объекту: ${escapeHtml(formatDealAmount(loosePaid) || '0\u00A0₽')}</div>
+       <div class="payments-list">${view.loose.map(payment => renderPaymentRow(l.id, payment)).join('')}</div>`
+    : '';
+  return `
+    <div class="overview-block payments-block" id="paymentsBlock-${l.id}">
+      <div class="payments-head">
+        <div class="overview-block-title">Платежи</div>
+        <div class="payments-total">Оплачено ${escapeHtml(formatDealAmount(paid) || '0\u00A0₽')} из ${escapeHtml(dealText)}</div>
+      </div>
+      <div class="payments-list">
+        ${view.rows.length ? view.rows.map(payment => renderPaymentRow(l.id, payment)).join('') : '<div class="files-empty">Платежей пока нет</div>'}
+      </div>
+      ${looseHtml}
+      <form class="payments-add" onsubmit="addPayment(${l.id}, ${objectId != null ? objectId : 'null'}); return false;">
+        <input type="date" id="payDate-${l.id}-${suffix}" required>
+        <input type="text" id="payAmount-${l.id}-${suffix}" class="money-input" inputmode="numeric" placeholder="Сумма, ₽" oninput="filterDealAmountInput(this)" required>
+        <input type="text" id="payNote-${l.id}-${suffix}" placeholder="Заметка">
+        <button type="submit" class="dbtn primary">Добавить</button>
+      </form>
+    </div>`;
+}
+
+function refreshPaymentsBlock(leadId) {
+  const l = leads.find(x => x.id === leadId);
+  const host = document.getElementById('paymentsBlock-' + leadId);
+  if (!l || !host) return;
+  const view = getOverviewDisplayData(l);
+  host.outerHTML = renderPaymentsBlock(l, view.objectId, view.data.deal_amount);
+  updateStats();
+}
+
+async function addPayment(leadId, objectId) {
+  const suffix = objectId != null ? objectId : 'l';
+  const paidAt = (document.getElementById('payDate-' + leadId + '-' + suffix) || {}).value || '';
+  const digits = ((document.getElementById('payAmount-' + leadId + '-' + suffix) || {}).value || '').replace(/\D/g, '');
+  const note = ((document.getElementById('payNote-' + leadId + '-' + suffix) || {}).value || '').trim();
+  if (!paidAt || !digits) {
+    showToast('Укажите дату и сумму');
+    return;
+  }
+  const body = { paid_at: paidAt, amount: parseInt(digits, 10), note: note, source: 'manual' };
+  if (objectId != null) body.object_id = objectId;
+  const created = await apiCreatePayment(leadId, body);
+  if (!created) {
+    showToast('Не удалось сохранить платёж');
+    return;
+  }
+  const l = leads.find(x => x.id === leadId);
+  if (l) {
+    l.payments = l.payments || [];
+    const idx = l.payments.findIndex(payment => payment.id === created.id);
+    if (idx >= 0) l.payments[idx] = created;
+    else l.payments.push(created);
+  }
+  refreshPaymentsBlock(leadId);
+}
+
+function startEditPayment(leadId, paymentId) {
+  const l = leads.find(x => x.id === leadId);
+  const payment = l && (l.payments || []).find(item => item.id === paymentId);
+  const row = document.getElementById('paymentItem-' + paymentId);
+  if (!payment || !row) return;
+  row.innerHTML = `
+    <input type="date" id="payEditDate-${paymentId}" value="${escapeHtml(LeadList.parseYmd(payment.paid_at))}">
+    <input type="text" id="payEditAmount-${paymentId}" class="money-input" inputmode="numeric" value="${Number(payment.amount) || 0}" oninput="filterDealAmountInput(this)">
+    <input type="text" id="payEditNote-${paymentId}" value="${escapeHtml(payment.note || '')}">
+    <button type="button" class="dbtn primary" onclick="savePaymentEdit(${leadId}, ${paymentId})">Сохранить</button>
+    <button type="button" class="dbtn" onclick="refreshPaymentsBlock(${leadId})">Отмена</button>`;
+}
+
+async function savePaymentEdit(leadId, paymentId) {
+  const paidAt = (document.getElementById('payEditDate-' + paymentId) || {}).value || '';
+  const digits = ((document.getElementById('payEditAmount-' + paymentId) || {}).value || '').replace(/\D/g, '');
+  const note = ((document.getElementById('payEditNote-' + paymentId) || {}).value || '').trim();
+  if (!paidAt || !digits) {
+    showToast('Укажите дату и сумму');
+    return;
+  }
+  const l = leads.find(x => x.id === leadId);
+  const current = l && (l.payments || []).find(item => item.id === paymentId);
+  const body = { paid_at: paidAt, amount: parseInt(digits, 10), note: note };
+  if (current && current.object_id != null) body.object_id = current.object_id;
+  const updated = await apiUpdatePayment(leadId, paymentId, body);
+  if (!updated) {
+    showToast('Не удалось сохранить платёж');
+    return;
+  }
+  if (l) l.payments = (l.payments || []).map(item => item.id === updated.id ? updated : item);
+  refreshPaymentsBlock(leadId);
+}
+
+async function deletePayment(leadId, paymentId) {
+  if (!confirm('Удалить платёж?')) return;
+  const ok = await apiDeletePayment(leadId, paymentId);
+  if (!ok) {
+    showToast('Не удалось удалить платёж');
+    return;
+  }
+  const l = leads.find(x => x.id === leadId);
+  if (l) l.payments = (l.payments || []).filter(item => item.id !== paymentId);
+  refreshPaymentsBlock(leadId);
 }
 
 function renderFilesBlock(l) {

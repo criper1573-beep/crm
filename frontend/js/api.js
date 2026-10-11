@@ -304,6 +304,47 @@ async function apiRegisterAvitoWebhook(url) {
   }
 }
 
+async function apiCreatePayment(leadId, data) {
+  try {
+    const res = await fetch(`${BASE}/leads/${leadId}/payments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error(res.statusText);
+    return await res.json();
+  } catch (e) {
+    console.error('apiCreatePayment:', e);
+    return null;
+  }
+}
+
+async function apiUpdatePayment(leadId, paymentId, data) {
+  try {
+    const res = await fetch(`${BASE}/leads/${leadId}/payments/${paymentId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error(res.statusText);
+    return await res.json();
+  } catch (e) {
+    console.error('apiUpdatePayment:', e);
+    return null;
+  }
+}
+
+async function apiDeletePayment(leadId, paymentId) {
+  try {
+    const res = await fetch(`${BASE}/leads/${leadId}/payments/${paymentId}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(res.statusText);
+    return await res.json();
+  } catch (e) {
+    console.error('apiDeletePayment:', e);
+    return null;
+  }
+}
+
 // ─── Файлы лида ─────────────────────────────────────────────
 async function apiGetLeadFiles(leadId) {
   try {

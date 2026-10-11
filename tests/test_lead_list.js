@@ -75,4 +75,39 @@ assert.deepStrictEqual(LeadList.leadRouteAction('', [15], 15), { type: 'list', i
 assert.deepStrictEqual(LeadList.leadRouteAction('#', [15], 15), { type: 'list', id: null });
 assert.deepStrictEqual(LeadList.leadRouteAction('#other', [15], 15), { type: 'ignore', id: null });
 
+assert.strictEqual(LeadList.parseYmd('2.12.25'), '2025-12-02');
+assert.strictEqual(LeadList.parseYmd('02.12.2025'), '2025-12-02');
+assert.strictEqual(LeadList.parseYmd('2.12.25 12:00'), '2025-12-02');
+assert.strictEqual(LeadList.leadCreatedYmd({ created_at: '2.12.25' }), '2025-12-02');
+assert.strictEqual(LeadList.canonicalPeriod('30'), 'month');
+assert.strictEqual(LeadList.canonicalPeriod('7'), 'week');
+assert.strictEqual(LeadList.canonicalPeriod('90'), 'quarter');
+
+const prev = LeadList.periodRange('prev_month', '', '', today);
+assert.strictEqual(prev.start, '2026-09-01');
+assert.strictEqual(prev.end, '2026-09-30');
+assert.deepStrictEqual(LeadList.periodRange('prev_month', '', '', '2026-01-15'), { start: '2025-12-01', end: '2025-12-31' });
+assert.deepStrictEqual(LeadList.periodRange('prev_month', '', '', '2024-03-10'), { start: '2024-02-01', end: '2024-02-29' });
+assert.deepStrictEqual(LeadList.periodRange('prev_month', '', '', '2025-03-10'), { start: '2025-02-01', end: '2025-02-28' });
+assert.strictEqual(LeadList.periodRange('quarter', '', '', today).start, '2026-07-14');
+assert.strictEqual(LeadList.periodRange('year', '', '', today).start, '2025-10-12');
+
+const imported = {
+  id: 1, status: 'client', created_at: '2026-10-11 09:00:00', deal_amount: 500000,
+  payments: [{ paid_at: '2026-04-15', amount: 100000 }, { paid_at: '2.12.25', amount: 5000 }],
+};
+const fresh = { id: 2, status: 'client', created_at: '2026-10-10 09:00:00', deal_amount: 50000, payments: [] };
+const repeat = {
+  id: 3, status: 'repeat', created_at: '2024-01-01 00:00:00', deal_amount: 80000,
+  payments: [{ paid_at: '2026-10-08', amount: 70000 }],
+};
+const sample = [imported, fresh, repeat];
+assert.strictEqual(LeadList.sumPayments(sample, 'week', '', '', today), 70000);
+assert.strictEqual(LeadList.leadInWonPeriod(imported, 'week', '', '', today), false);
+assert.strictEqual(LeadList.leadInWonPeriod(fresh, 'week', '', '', today), true);
+assert.strictEqual(LeadList.leadInWonPeriod(repeat, 'week', '', '', today), true);
+assert.deepStrictEqual(LeadList.countWon(sample, 'week', '', '', today), { clients: 1, repeats: 1 });
+assert.strictEqual(LeadList.sumDealAmounts(sample, 'week', '', '', today), 130000);
+assert.strictEqual(LeadList.sumPayments(sample, 'custom', '2025-12-01', '2025-12-31', today), 5000);
+
 console.log('lead-list ok');

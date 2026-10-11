@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend import database
-from backend.models import Lead, LeadFile, LeadObjectCreate, NoteCreate, MessageCreate, MessageBulkItem, MessageDirectionUpdate, AvitoSendMessage, AvitoRegisterWebhook
+from backend.models import Lead, LeadFile, LeadObjectCreate, NoteCreate, MessageCreate, MessageBulkItem, MessageDirectionUpdate, AvitoSendMessage, AvitoRegisterWebhook, PaymentCreate, PaymentUpdate
 from backend import grs_ai
 from backend import avito
 from backend import files as lead_files
@@ -124,6 +124,7 @@ def get_lead(lead_id: int):
         lead["objects"] = database.get_objects_by_lead_id(lead_id)
     else:
         lead["objects"] = []
+    lead["payments"] = database.list_payments(lead_id)
     return lead
 
 
@@ -150,6 +151,84 @@ def update_lead(lead_id: int, lead: Lead):
     else:
         updated["objects"] = []
     return updated
+
+
+def _payment_http(exc: database.PaymentError) -> HTTPException:
+    if exc.code == "not_found":
+        return HTTPException(status_code=404, detail="Payment not found")
+    if exc.code == "duplicate_external":
+        return HTTPException(status_code=409, detail="external_id already exists")
+    if exc.code == "bad_date":
+        return HTTPException(status_code=400, detail="Bad paid_at")
+    if exc.code == "bad_object":
+        return HTTPException(status_code=400, detail="Object not found")
+    if exc.code == "bad_amount":
+        return HTTPException(status_code=400, detail="Bad amount")
+    return HTTPException(status_code=400, detail="Bad payment")
+
+
+def _model_data(model, exclude_unset: bool = False) -> dict:
+    if hasattr(model, "model_dump"):
+        return model.model_dump(exclude_unset=exclude_unset)
+    return model.dict(exclude_unset=exclude_unset)
+
+
+@app.get("/api/leads/{lead_id}/payments")
+def list_lead_payments(lead_id: int):
+    if database.get_lead_by_id(lead_id) is None:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    return database.list_payments(lead_id)
+
+
+@app.post("/api/leads/{lead_id}/payments")
+def create_payment(lead_id: int, body: PaymentCreate):
+    """Создаёт платёж. Если external_id уже есть, обновляет эту строку и возвращает 200."""
+    if database.get_lead_by_id(lead_id) is None:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    try:
+        row, created = database.save_payment(lead_id, _model_data(body))
+    except database.PaymentError as exc:
+        raise _payment_http(exc) from exc
+    if created:
+        return JSONResponse(content=row, status_code=201)
+    return row
+
+
+@app.put("/api/leads/{lead_id}/payments/{payment_id}")
+def update_payment(lead_id: int, payment_id: int, body: PaymentUpdate):
+    if database.get_lead_by_id(lead_id) is None:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    try:
+        row, _created = database.save_payment(lead_id, _model_data(body, exclude_unset=True), payment_id)
+    except database.PaymentError as exc:
+        raise _payment_http(exc) from exc
+    return row
+
+
+@app.delete("/api/leads/{lead_id}/payments/{payment_id}")
+def delete_payment(lead_id: int, payment_id: int):
+    if database.get_lead_by_id(lead_id) is None:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    if not database.delete_payment(lead_id, payment_id):
+        raise HTTPException(status_code=404, detail="Payment not found")
+    return {"ok": True}
+
+
+@app.get("/api/analytics/revenue")
+def analytics_revenue(
+    period: str = Query(default="month", description="week, month, prev_month, quarter, year, all, custom"),
+    start: str | None = Query(default=None, description="Начало для custom, YYYY-MM-DD"),
+    end: str | None = Query(default=None, description="Конец для custom, YYYY-MM-DD"),
+    today: str | None = Query(default=None, description="Опорная дата YYYY-MM-DD, по умолчанию сегодня"),
+):
+    """Выручка — сумма платежей с paid_at в периоде. Сумма сделок и счётчики клиентов считаются отдельно."""
+    if not database.known_period(period):
+        raise HTTPException(status_code=400, detail="Unknown period")
+    from datetime import date as _date
+    anchor = today or _date.today().isoformat()
+    if database._to_ymd(anchor) == "" and today:
+        raise HTTPException(status_code=400, detail="Bad today")
+    return database.analytics_summary(period, start, end, anchor)
 
 
 @app.delete("/api/leads/{lead_id}")

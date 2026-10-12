@@ -876,21 +876,39 @@ def upload_lead_files(lead_id: int, files: list[UploadFile] = File(..., descript
         raise HTTPException(status_code=400, detail="No files")
     if len(files) > lead_files.MAX_FILES_PER_REQUEST:
         raise HTTPException(status_code=400, detail=f"Too many files (max {lead_files.MAX_FILES_PER_REQUEST})")
-    saved: list[tuple[str, str, str, int]] = []
+    staged: list[tuple[str, str, str, str, int, str]] = []
     try:
         for f in files:
-            name = lead_files.sanitize_name(f.filename)
-            stored, size = lead_files.save_stream(lead_id, f.file)
-            saved.append((name, stored, lead_files.guess_mime(name, f.content_type), size))
+            raw_name = lead_files.sanitize_name(f.filename)
+            key = lead_files.normalize_version_name(raw_name)
+            stored, size, digest = lead_files.save_stream_hashed(lead_id, f.file)
+            staged.append((raw_name, key, stored, lead_files.guess_mime(raw_name, f.content_type), size, digest))
     except lead_files.FileTooLarge:
-        for _, stored, _, _ in saved:
-            lead_files.remove_stored(lead_id, stored)
+        for item in staged:
+            lead_files.remove_stored(lead_id, item[2])
         raise HTTPException(status_code=413, detail=f"File too large (max {lead_files.MAX_FILE_SIZE // (1024 * 1024)} MB)")
     except Exception:
-        for _, stored, _, _ in saved:
-            lead_files.remove_stored(lead_id, stored)
+        for item in staged:
+            lead_files.remove_stored(lead_id, item[2])
         raise
-    result = [lead_files.insert_file(lead_id, n, st, mt, sz) for n, st, mt, sz in saved]
+    result = []
+    for raw_name, key, stored, mime, size, digest in staged:
+        lead_files.register_version(
+            lead_id,
+            key,
+            lead_files.category_from_name(raw_name),
+            "ui",
+            "",
+            stored,
+            size,
+            digest,
+            mime,
+            original_name=raw_name,
+        )
+        card = lead_files.card_for_filename(lead_id, key)
+        if card is None:
+            raise HTTPException(status_code=500, detail="File was not saved")
+        result.append(card)
     logging.getLogger("backend.main").info("lead %s: uploaded %d file(s)", lead_id, len(result))
     return result
 
@@ -920,13 +938,17 @@ def upload_lead_file_version(
     comment: str = Form(""),
     _: None = Depends(require_basic),
 ):
-    """Новая версия. Тот же sha256, что у последней версии этого имени, не сохраняется."""
+    """Новая версия. Хвост _vN и дата в имени срезаются: это ключ цепочки, а не новая карточка.
+
+    Тот же sha256, что у последней версии этого ключа, не сохраняется.
+    """
     _require_lead(lead_id)
     try:
         canon = lead_files.normalize_category(category)
     except lead_files.BadCategory:
         raise HTTPException(status_code=400, detail="Unknown category") from None
-    name = lead_files.sanitize_name((filename or "").strip() or file.filename)
+    raw_name = lead_files.sanitize_name((filename or "").strip() or file.filename)
+    key = lead_files.normalize_version_name(raw_name)
     try:
         stored, size, digest = lead_files.save_stream_hashed(lead_id, file.file)
     except lead_files.FileTooLarge:
@@ -936,14 +958,15 @@ def upload_lead_file_version(
         ) from None
     result = lead_files.register_version(
         lead_id,
-        name,
+        key,
         canon,
         author,
         comment,
         stored,
         size,
         digest,
-        lead_files.guess_mime(name, file.content_type),
+        lead_files.guess_mime(raw_name, file.content_type),
+        original_name=raw_name,
     )
     logging.getLogger("backend.main").info(
         "lead %s: file version %s skipped=%s", lead_id, result.get("version"), result.get("skipped")

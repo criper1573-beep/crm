@@ -936,7 +936,7 @@ def delete_lead_file(lead_id: int, file_id: int):
 @app.get("/favicon.ico", include_in_schema=False)
 def favicon_ico():
     """Браузеры запрашивают /favicon.ico отдельно от <link rel=icon>."""
-    return FileResponse(FRONTEND_DIR / "favicon.png", media_type="image/png")
+    return FileResponse(FRONTEND_DIR / "favicon.ico", media_type="image/x-icon")
 
 
 # Статика фронтенда по корневому пути (подключать после /api)

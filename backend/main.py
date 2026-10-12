@@ -11,7 +11,7 @@ from pathlib import Path
 
 from urllib.parse import quote
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -898,6 +898,100 @@ def upload_lead_files(lead_id: int, files: list[UploadFile] = File(..., descript
 def _content_disposition(kind: str, name: str) -> str:
     ascii_name = "".join(ch if 32 <= ord(ch) < 127 and ch not in '"\\;' else "_" for ch in name) or "file"
     return f"{kind}; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name, safe='')}"
+
+
+def _version_since(value: str | None) -> str | None:
+    if value is None or not str(value).strip():
+        return None
+    try:
+        return database.normalize_since(value)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Bad since") from None
+
+
+@app.post("/api/leads/{lead_id}/files/versions", tags=["files"],
+          summary="Сохранить версию файла лида")
+def upload_lead_file_version(
+    lead_id: int,
+    file: UploadFile = File(..., description="Файл версии"),
+    filename: str = Form("", description="Имя в истории. Пусто — имя загруженного файла"),
+    category: str = Form(""),
+    author: str = Form(""),
+    comment: str = Form(""),
+    _: None = Depends(require_basic),
+):
+    """Новая версия. Тот же sha256, что у последней версии этого имени, не сохраняется."""
+    _require_lead(lead_id)
+    try:
+        canon = lead_files.normalize_category(category)
+    except lead_files.BadCategory:
+        raise HTTPException(status_code=400, detail="Unknown category") from None
+    name = lead_files.sanitize_name((filename or "").strip() or file.filename)
+    try:
+        stored, size, digest = lead_files.save_stream_hashed(lead_id, file.file)
+    except lead_files.FileTooLarge:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large (max {lead_files.MAX_FILE_SIZE // (1024 * 1024)} MB)",
+        ) from None
+    result = lead_files.register_version(
+        lead_id,
+        name,
+        canon,
+        author,
+        comment,
+        stored,
+        size,
+        digest,
+        lead_files.guess_mime(name, file.content_type),
+    )
+    logging.getLogger("backend.main").info(
+        "lead %s: file version %s skipped=%s", lead_id, result.get("version"), result.get("skipped")
+    )
+    return result
+
+
+@app.get("/api/leads/{lead_id}/files/versions", tags=["files"],
+         summary="История версий файлов лида, новые сверху")
+def list_lead_file_versions(
+    lead_id: int,
+    since: str | None = Query(default=None, description="YYYY-MM-DD, версии с этой даты включительно"),
+    filename: str | None = Query(default=None, description="Только это имя файла"),
+    _: None = Depends(require_basic),
+):
+    _require_lead(lead_id)
+    return lead_files.list_versions(lead_id, _version_since(since), filename)
+
+
+@app.get("/api/leads/{lead_id}/files/versions/{vid}/raw", tags=["files"],
+         summary="Скачать конкретную версию файла",
+         response_class=FileResponse)
+def get_lead_file_version_raw(lead_id: int, vid: int, _: None = Depends(require_basic)):
+    raw = lead_files.get_version_raw(lead_id, vid)
+    if not raw:
+        raise HTTPException(status_code=404, detail="File version not found")
+    try:
+        path = lead_files.safe_path(lead_id, raw["stored_name"])
+    except ValueError:
+        raise HTTPException(status_code=404, detail="File version not found") from None
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="File missing on disk")
+    mime = lead_files.guess_mime(raw["filename"], None)
+    headers = {
+        "Content-Disposition": _content_disposition("attachment", raw["filename"]),
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "private, max-age=3600",
+    }
+    return FileResponse(path, media_type=mime, headers=headers)
+
+
+@app.delete("/api/leads/{lead_id}/files/versions/{vid}", tags=["files"],
+            summary="Удалить версию файла лида")
+def delete_lead_file_version(lead_id: int, vid: int, _: None = Depends(require_basic)):
+    if not lead_files.delete_version(lead_id, vid):
+        raise HTTPException(status_code=404, detail="File version not found")
+    logging.getLogger("backend.main").info("lead %s: deleted file version %s", lead_id, vid)
+    return {"ok": True}
 
 
 @app.get("/api/leads/{lead_id}/files/{file_id}", tags=["files"],

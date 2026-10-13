@@ -842,6 +842,21 @@ function setFilter(f) {
 function filterLeads() { renderList(); }
 
 // ─── MOBILE PANELS ──────────────────────────────────────────
+function closeImportMenu() {
+  const menu = document.getElementById('importMenu');
+  const btn = document.getElementById('btnImportMenu');
+  if (menu) menu.hidden = true;
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+function toggleImportMenu(event) {
+  if (event) event.stopPropagation();
+  const menu = document.getElementById('importMenu');
+  const btn = document.getElementById('btnImportMenu');
+  if (!menu || !btn) return;
+  const open = menu.hidden;
+  menu.hidden = !open;
+  btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
 function closeNavMenu() {
   document.body.classList.remove('mobile-nav-open');
   const btn = document.getElementById('btnNavBurger');
@@ -2120,8 +2135,14 @@ async function init() {
       toggleCsvImportModal();
       return;
     }
+    closeImportMenu();
     closeNavMenu();
     closeMobilePanels();
+  });
+  document.addEventListener('click', function (e) {
+    const wrap = document.getElementById('importMenuWrap');
+    if (!wrap || wrap.contains(e.target)) return;
+    closeImportMenu();
   });
   initFileDropZone();
   window.addEventListener('hashchange', onLeadHashChange);

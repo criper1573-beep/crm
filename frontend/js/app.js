@@ -509,7 +509,10 @@ function updatePeriodCaptions() {
   const text = periodCaptionText();
   const listCap = document.getElementById('listPeriodCaption');
   const panelCap = document.getElementById('periodCaption');
-  if (listCap) listCap.textContent = text;
+  if (listCap) {
+    listCap.textContent = text;
+    listCap.title = text;
+  }
   if (panelCap) panelCap.textContent = text + ' Выручка считается по дате платежа. Список лидов — по дате добавления.';
 }
 
@@ -659,6 +662,7 @@ function updateStats() {
     }
     sfl.innerHTML = html;
   }
+  syncFunnelToggle(leadsForPeriod);
   // work types stats in right panel (by period)
   const wtEl = document.getElementById('workTypesStats');
   if (wtEl && CONFIG.workTypes) {
@@ -784,11 +788,55 @@ function renderList() {
   }).join('');
 }
 
+function syncFunnelToggle(leadsForPeriod) {
+  const labelEl = document.getElementById('funnelToggleLabel');
+  const dotEl = document.getElementById('funnelToggleDot');
+  const btn = document.getElementById('funnelToggle');
+  if (!labelEl) return;
+  const rows = leadsForPeriod || [];
+  const total = rows.length;
+  let name = 'Все';
+  let count = total;
+  let pct = total ? 100 : 0;
+  let dot = 'sdot-all';
+  if (currentFilter !== 'all') {
+    const cfg = CONFIG.statuses && CONFIG.statuses[currentFilter];
+    name = (cfg && cfg.label) || currentFilter;
+    count = rows.filter(l => l.status === currentFilter).length;
+    pct = total ? Math.round(count / total * 100) : 0;
+    dot = 'sdot-' + currentFilter;
+  }
+  labelEl.textContent = name + ' · ' + count + ' · ' + pct + '%';
+  if (dotEl) dotEl.className = 'fi-dot ' + dot;
+  if (btn) btn.setAttribute('aria-label', 'Воронка статусов: ' + name + ', ' + count + ', ' + pct + '%');
+}
+
+function collapseStatusFunnel() {
+  const funnel = document.querySelector('.sidebar-funnel');
+  const btn = document.getElementById('funnelToggle');
+  if (funnel) funnel.classList.remove('is-open');
+  if (btn) {
+    btn.classList.remove('is-open');
+    btn.setAttribute('aria-expanded', 'false');
+  }
+}
+
+function toggleStatusFunnel() {
+  const funnel = document.querySelector('.sidebar-funnel');
+  const btn = document.getElementById('funnelToggle');
+  if (!funnel || !btn) return;
+  const open = !funnel.classList.contains('is-open');
+  funnel.classList.toggle('is-open', open);
+  btn.classList.toggle('is-open', open);
+  btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
 function setFilter(f) {
   currentFilter = f;
   saveState();
   renderList();
   updateStats();
+  collapseStatusFunnel();
 }
 
 function filterLeads() { renderList(); }

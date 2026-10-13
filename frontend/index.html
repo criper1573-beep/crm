@@ -9,11 +9,11 @@
 <link rel="icon" href="icon-32.png?v=crm3" type="image/png" sizes="32x32">
 <link rel="apple-touch-icon" href="icon-180.png?v=crm3" sizes="180x180">
 <link rel="stylesheet" href="css/fonts.css?v=flow2">
-<link rel="stylesheet" href="css/style.css?v=flow5">
+<link rel="stylesheet" href="css/style.css?v=flow6">
 <script src="js/config.js?v=flow2"></script>
 <script src="js/api.js?v=flow5"></script>
 <script src="js/lead-list.js?v=flow5"></script>
-<script src="js/app.js?v=flow5"></script>
+<script src="js/app.js?v=flow6"></script>
 </head>
 <body>
 
@@ -28,6 +28,7 @@
   <nav class="nav-menu" id="navMenu" aria-label="Разделы">
     <button type="button" class="nav-menu-btn" id="btnMobileSidebar" onclick="toggleMobilePanel('sidebar')">Лиды</button>
     <button type="button" class="nav-menu-btn" id="btnMobileRpanel" onclick="toggleMobilePanel('rpanel')">Аналитика</button>
+    <button type="button" class="nav-menu-btn nav-menu-btn-import" id="btnNavImportCsv" onclick="closeNavMenu(); toggleCsvImportModal()">Импорт CSV</button>
   </nav>
   <div class="hstat header-hstat-avito"><span class="dot dot-live" aria-hidden="true"></span>Авито синхронизирован</div>
   <div class="header-stats">
@@ -41,7 +42,7 @@
 
   <div class="sidebar">
     <div class="sidebar-actions">
-      <button type="button" class="sidebar-btn sidebar-btn-new" id="btnNewLead" onclick="toggleNewLeadForm()">Новый лид</button>
+      <button type="button" class="sidebar-btn sidebar-btn-new" id="btnNewLead" aria-label="Новый лид" onclick="toggleNewLeadForm()"><span class="sidebar-btn-icon" aria-hidden="true">+</span><span class="sidebar-btn-label">Новый лид</span></button>
       <button type="button" class="sidebar-btn sidebar-btn-import" id="btnImportCsv" onclick="toggleCsvImportModal()">Импорт CSV</button>
     </div>
     <div class="new-lead-form-wrap" id="newLeadFormWrap" style="display:none">
@@ -77,14 +78,19 @@
         <input type="search" id="searchInput" placeholder="Имя, адрес, комментарий..." oninput="filterLeads()">
       </div>
       <div class="list-toolbar">
-        <label class="list-sort" for="leadSort">Сортировка
+        <button type="button" class="funnel-toggle" id="funnelToggle" aria-expanded="false" aria-controls="sidebarFunnelList" onclick="toggleStatusFunnel()">
+          <span class="fi-dot sdot-all" id="funnelToggleDot" aria-hidden="true"></span>
+          <span class="funnel-toggle-text" id="funnelToggleLabel">Все · 0 · 0%</span>
+          <span class="funnel-toggle-caret" aria-hidden="true"></span>
+        </button>
+        <label class="list-sort" for="leadSort"><span class="list-sort-label">Сортировка</span>
           <select id="leadSort" onchange="setLeadSort(this.value)">
             <option value="created_desc">Сначала новые</option>
             <option value="created_asc">Сначала старые</option>
             <option value="last_message">По последнему сообщению</option>
           </select>
         </label>
-        <div class="list-period-caption" id="listPeriodCaption">Показаны лиды, добавленные за последние 30 дней</div>
+        <div class="list-period-caption" id="listPeriodCaption" title="Показаны лиды, добавленные за последние 30 дней">Показаны лиды, добавленные за последние 30 дней</div>
       </div>
       <div class="sidebar-funnel">
         <div class="rp-sec">Воронка статусов</div>

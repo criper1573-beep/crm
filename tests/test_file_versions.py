@@ -27,6 +27,7 @@ VERSION_COLUMNS = [
     "category",
     "author",
     "comment",
+    "original_name",
     "sha256",
     "size",
     "stored_name",
@@ -390,7 +391,13 @@ def test_legacy_upload_list_preview_delete_and_backup(client, storage, tmp_path)
     assert preview.headers["content-type"].startswith("image/png")
     assert "inline" in preview.headers["content-disposition"].lower()
     assert _files_count(client, lead_id) == 1
-    assert _history(client, lead_id) == []
+    ui_history = _history(client, lead_id)
+    assert len(ui_history) == 1
+    assert ui_history[0]["author"] == "ui"
+    assert ui_history[0]["filename"] == "photo.png"
+    assert ui_history[0]["version"] == 1
+    assert ui_history[0]["original_name"] == "photo.png"
+    assert ui_history[0]["sha256"] == hashlib.sha256(b"png-bytes").hexdigest()
 
     conn = sqlite3.connect(db_path)
     legacy = conn.execute(
@@ -399,8 +406,8 @@ def test_legacy_upload_list_preview_delete_and_backup(client, storage, tmp_path)
     version_rows = conn.execute("SELECT COUNT(*) FROM lead_file_versions").fetchone()[0]
     updated = conn.execute("SELECT updated_at FROM leads WHERE id = ?", (lead_id,)).fetchone()[0]
     conn.close()
-    assert legacy == (None, None, None)
-    assert version_rows == 0
+    assert legacy == ("прочее", 1, hashlib.sha256(b"png-bytes").hexdigest())
+    assert version_rows == 1
     assert updated != "1999-01-01 00:00:00"
     assert _notes_count(db_path, lead_id) == 0
 
@@ -417,8 +424,8 @@ def test_legacy_upload_list_preview_delete_and_backup(client, storage, tmp_path)
     conn.close()
     skipped_setup = _post_version(client, lead_id, b"png-bytes", upload_name="photo.png", filename="photo.png")
     assert skipped_setup.status_code == 200
-    # Первая версия — новое содержимое относительно пустой истории, не пропуск.
-    assert skipped_setup.json()["skipped"] is False
+    # UI уже записал эти байты как версию 1, повтор с тем же sha256 — пропуск.
+    assert skipped_setup.json() == {"skipped": True, "version": 1}
     conn = sqlite3.connect(db_path)
     conn.execute("UPDATE leads SET updated_at = ? WHERE id = ?", ("1999-02-02 00:00:00", lead_id))
     conn.commit()
@@ -477,7 +484,14 @@ def test_legacy_upload_list_preview_delete_and_backup(client, storage, tmp_path)
     solo_id = solo.json()[0]["id"]
     assert client.delete(f"/api/leads/{lead_id}/files/{solo_id}").status_code == 200
     assert client.get(f"/api/leads/{lead_id}/files/{solo_id}").status_code == 404
-    assert len(_disk(files_dir, lead_id)) == 2
+    # Карточка снята, версия UI и байты note.txt остаются вместе с двумя версиями фото.
+    assert len(_disk(files_dir, lead_id)) == 3
+    note_versions = _history(client, lead_id, filename="note.txt")
+    assert len(note_versions) == 1
+    assert note_versions[0]["author"] == "ui"
+    assert client.get(
+        f"/api/leads/{lead_id}/files/versions/{note_versions[0]['id']}/raw", auth=AUTH
+    ).content == b"solo"
     conn = sqlite3.connect(db_path)
     left = conn.execute(
         "SELECT COUNT(*) FROM lead_files WHERE lead_id = ? AND original_name = ?",
@@ -538,6 +552,73 @@ def test_existing_table_gains_columns_without_rewriting_rows(tmp_path, monkeypat
     assert row == ("old.txt", None, None, None, "2020-01-01 00:00:00")
     assert updated == "2020-01-01 00:00:00"
     assert version_cols == VERSION_COLUMNS
+
+
+def test_existing_version_table_gains_original_name(tmp_path, monkeypatch):
+    """Прод уже имеет lead_file_versions без original_name. Колонка добавляется, строка та же."""
+    db_path = tmp_path / "crm.db"
+    monkeypatch.setenv("CRM_FILES_DIR", str(tmp_path / "files"))
+    import backend.database as database
+    import backend.files as files
+
+    monkeypatch.setattr(database, "DB_PATH", db_path)
+    monkeypatch.setattr(files, "FILES_DIR", tmp_path / "files")
+    digest = "b" * 64
+    stored = "c" * 32
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE lead_file_versions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            lead_id INTEGER NOT NULL,
+            filename TEXT NOT NULL,
+            version INTEGER NOT NULL,
+            category TEXT NOT NULL,
+            author TEXT NOT NULL DEFAULT '',
+            comment TEXT NOT NULL DEFAULT '',
+            sha256 TEXT NOT NULL,
+            size INTEGER NOT NULL DEFAULT 0,
+            stored_name TEXT NOT NULL,
+            created_at TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO lead_file_versions
+            (lead_id, filename, version, category, author, comment, sha256, size, stored_name, created_at)
+        VALUES (1, 'old_v2.xlsx', 2, 'смета', 'бот', 'заметка', ?, 4, ?, '2020-05-01 00:00:00')
+        """,
+        (digest, stored),
+    )
+    conn.commit()
+    conn.close()
+
+    files.init_table()
+    files.init_table()
+
+    conn = sqlite3.connect(db_path)
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(lead_file_versions)")]
+    row = conn.execute(
+        """
+        SELECT filename, version, category, author, comment, original_name, sha256, stored_name, created_at
+        FROM lead_file_versions
+        """
+    ).fetchone()
+    conn.close()
+    without = [name for name in VERSION_COLUMNS if name != "original_name"]
+    assert cols == without + ["original_name"]
+    assert row == (
+        "old_v2.xlsx",
+        2,
+        "смета",
+        "бот",
+        "заметка",
+        "",
+        digest,
+        stored,
+        "2020-05-01 00:00:00",
+    )
 
 
 def test_version_auth_filename_and_missing_lead(client, monkeypatch, storage):

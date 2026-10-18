@@ -22,6 +22,7 @@ from backend.models import Lead, LeadFile, LeadObjectCreate, NoteCreate, Message
 from backend import grs_ai
 from backend import avito
 from backend import files as lead_files
+from backend import sonya_hook
 
 app = FastAPI()
 _basic = HTTPBasic()
@@ -665,22 +666,28 @@ def _load_avito_chat_history(lead_id: int, chat_id: str) -> None:
         log.exception("Load avito chat history for lead %s, chat %s: %s", lead_id, chat_id, e)
 
 
-def _process_avito_webhook_payload(body: dict) -> None:
-    """Обработка payload webhook Авито (вызывается в фоне после ответа 200)."""
+def _process_avito_webhook_payload(body: dict) -> tuple[int | None, bool]:
+    """Запись текстового сообщения в CRM. Возвращает (lead_id, создан ли лид этим событием).
+
+    Звонки и сообщения без текста по-прежнему не пишутся. Для них оба значения пустые,
+    даже если лид по чату уже есть — его подставляет вызывающий код.
+    """
     log = logging.getLogger("backend.main")
     payload = body.get("payload") or {}
-    if payload.get("type") != "message":
-        return
+    if not isinstance(payload, dict) or payload.get("type") != "message":
+        return None, False
     value = payload.get("value") or {}
+    if not isinstance(value, dict):
+        return None, False
     chat_id = (value.get("chat_id") or "").strip()
     msg_id = str(value.get("id") or "").strip()
     msg_type = (value.get("type") or "").strip()
     if not chat_id or not msg_id or msg_type != "text":
-        return
+        return None, False
     content = value.get("content") or {}
     text = (content.get("text") or "").strip()
     if not text:
-        return
+        return None, False
     author_id = str(value.get("author_id") or "")
     our_user_id = str(value.get("user_id") or "")
     direction = "out" if (author_id and author_id == our_user_id) else "in"
@@ -699,6 +706,33 @@ def _process_avito_webhook_payload(body: dict) -> None:
     database.create_avito_message(lead_id, text, direction, created_at, msg_id)
     if is_new_lead:
         _load_avito_chat_history(lead_id, chat_id)
+    return lead_id, is_new_lead
+
+
+def _existing_lead_id_for_avito_event(body: dict) -> int | None:
+    """Лид, уже привязанный к чату. Для звонка и прочих событий, которые в CRM не пишутся."""
+    payload = body.get("payload") or {}
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get("value") or {}
+    if not isinstance(value, dict):
+        return None
+    chat_id = value.get("chat_id")
+    if not isinstance(chat_id, str) or not chat_id.strip():
+        return None
+    lead = database.get_lead_by_avito_chat_id(chat_id.strip())
+    return None if lead is None else lead["id"]
+
+
+def _handle_avito_webhook_event(body: dict) -> None:
+    """Обычная запись в CRM, затем пересылка ассистенту. Сбой пересылки обработчик не роняет."""
+    lead_id, lead_created = _process_avito_webhook_payload(body)
+    if lead_id is None:
+        lead_id = _existing_lead_id_for_avito_event(body)
+    try:
+        sonya_hook.forward_avito_event(body, lead_id, lead_created)
+    except Exception as exc:
+        logging.getLogger("backend.main").error("Sonya hook forward failed: %s", type(exc).__name__)
 
 
 @app.post("/api/avito/webhook")
@@ -716,15 +750,8 @@ async def avito_webhook(request: Request, background_tasks: BackgroundTasks):
         body = await request.json()
     except Exception:
         return JSONResponse(status_code=200, content={"ok": True})
-    payload = body.get("payload") or {}
-    value = (payload.get("value") or {})
-    chat_id = (value.get("chat_id") or "").strip()
-    msg_id = str(value.get("id") or "").strip()
-    msg_type = (value.get("type") or "").strip()
-    if payload.get("type") == "message" and chat_id and msg_id and msg_type == "text":
-        content = value.get("content") or {}
-        if (content.get("text") or "").strip():
-            background_tasks.add_task(_process_avito_webhook_payload, body)
+    if isinstance(body, dict):
+        background_tasks.add_task(_handle_avito_webhook_event, body)
     return JSONResponse(status_code=200, content={"ok": True})
 
 

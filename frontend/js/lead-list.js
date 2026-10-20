@@ -265,6 +265,39 @@
     return 'Лид #' + id + ' не найден';
   }
 
+  function parseSearchId(query) {
+    var raw = String(query == null ? '' : query).trim();
+    if (raw.charAt(0) === '#') raw = raw.slice(1).trim();
+    if (!/^[1-9]\d*$/.test(raw)) return null;
+    var id = Number(raw);
+    if (!isFinite(id) || id <= 0 || id > MAX_LEAD_ID || String(id) !== raw) return null;
+    return id;
+  }
+
+  function leadMatchesSearch(lead, query) {
+    var q = String(query == null ? '' : query).toLowerCase();
+    if (!q) return true;
+    var exact = parseSearchId(q);
+    if (exact != null && leadId(lead) === exact) return true;
+    var name = String(lead && lead.name || '').toLowerCase();
+    var address = String(lead && lead.address || '').toLowerCase();
+    var comment = String(lead && lead.comment || '').toLowerCase();
+    return name.indexOf(q) !== -1 || address.indexOf(q) !== -1 || comment.indexOf(q) !== -1;
+  }
+
+  function orderSearchHits(leads, query) {
+    var list = (leads || []).slice();
+    var exact = parseSearchId(query);
+    if (exact == null) return list;
+    var head = [];
+    var tail = [];
+    for (var i = 0; i < list.length; i++) {
+      if (leadId(list[i]) === exact) head.push(list[i]);
+      else tail.push(list[i]);
+    }
+    return head.concat(tail);
+  }
+
   function leadRouteAction(hash, knownIds, activeId) {
     var id = parseLeadHash(hash);
     if (id != null) {
@@ -303,5 +336,8 @@
     isListHash: isListHash,
     missingLeadMessage: missingLeadMessage,
     leadRouteAction: leadRouteAction,
+    parseSearchId: parseSearchId,
+    leadMatchesSearch: leadMatchesSearch,
+    orderSearchHits: orderSearchHits,
   };
 });

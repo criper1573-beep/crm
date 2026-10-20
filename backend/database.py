@@ -241,6 +241,61 @@ def _lead_stamp(value: str | None) -> str:
     return f"{match.group(1)}-{match.group(2)}-{match.group(3)} {hh}:{mm}:{ss}"
 
 
+_SEARCH_ID_MAX = 9007199254740991
+
+
+def parse_search_id(query: str | None) -> int | None:
+    """Точный id из запроса «423» или «#423». Префикс и ведущий ноль не считаются id."""
+    raw = (query or "").strip()
+    if raw.startswith("#"):
+        raw = raw[1:].strip()
+    if not raw.isdigit() or raw[0] == "0":
+        return None
+    value = int(raw)
+    if value <= 0 or value > _SEARCH_ID_MAX or str(value) != raw:
+        return None
+    return value
+
+
+def lead_matches_search(lead: dict, query: str | None) -> bool:
+    """Подстрока по имени, адресу и комментарию, плюс точное совпадение id."""
+    q = (query or "").lower()
+    if not q:
+        return True
+    exact = parse_search_id(q)
+    if exact is not None:
+        try:
+            if int(lead.get("id") or 0) == exact:
+                return True
+        except (TypeError, ValueError):
+            pass
+    return (
+        q in (lead.get("name") or "").lower()
+        or q in (lead.get("address") or "").lower()
+        or q in (lead.get("comment") or "").lower()
+    )
+
+
+def order_search_hits(leads: list[dict], query: str | None) -> list[dict]:
+    """Сохраняет порядок остальных совпадений и ставит точный id первым."""
+    rows = list(leads)
+    exact = parse_search_id(query)
+    if exact is None:
+        return rows
+    head: list[dict] = []
+    tail: list[dict] = []
+    for lead in rows:
+        try:
+            lead_id = int(lead.get("id") or 0)
+        except (TypeError, ValueError):
+            lead_id = 0
+        if lead_id == exact:
+            head.append(lead)
+        else:
+            tail.append(lead)
+    return head + tail
+
+
 def sort_leads(leads: list[dict], mode: str) -> list[dict]:
     """Порядок списка. Не меняет записи, только возвращает новый список.
 

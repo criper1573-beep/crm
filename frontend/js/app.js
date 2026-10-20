@@ -745,16 +745,15 @@ function updateStats() {
 // ─── RENDER LIST ───────────────────────────────────────────
 function visibleSortedLeads() {
   const searchEl = document.getElementById('searchInput');
-  const q = searchEl ? searchEl.value.toLowerCase() : '';
+  const q = searchEl ? searchEl.value : '';
   const today = todayYmd();
   const filtered = leads.filter(l => {
     if (!LeadList.leadMatchesCreatedPeriod(l, currentPeriod, periodFrom, periodTo, today)) return false;
     const matchFilter = currentFilter === 'all' ||
       (CONFIG.statuses && currentFilter in CONFIG.statuses ? l.status === currentFilter : getStatusGroup(l.status) === currentFilter);
-    const matchSearch = !q || (l.name || '').toLowerCase().includes(q) || (l.address || '').toLowerCase().includes(q) || (l.comment || '').toLowerCase().includes(q);
-    return matchFilter && matchSearch;
+    return matchFilter && LeadList.leadMatchesSearch(l, q);
   });
-  return LeadList.sortLeads(filtered, currentSort);
+  return LeadList.orderSearchHits(LeadList.sortLeads(filtered, currentSort), q);
 }
 
 function renderList() {

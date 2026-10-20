@@ -190,6 +190,13 @@ def list_leads(
             "last_message (свежая переписка сверху). Без параметра порядок прежний — по id по возрастанию."
         ),
     ),
+    q: str | None = Query(
+        default=None,
+        description=(
+            "Необязательный поиск: подстрока в имени, адресе и комментарии. "
+            "«423» и «#423» дополнительно находят лид с этим id и ставят его первым."
+        ),
+    ),
 ):
     leads = database.get_all_leads()
     counts = lead_files.counts_by_lead()
@@ -199,6 +206,11 @@ def list_leads(
         if sort not in database.LEAD_SORTS:
             raise HTTPException(status_code=400, detail="Unknown sort")
         leads = database.sort_leads(leads, sort)
+    if q:
+        leads = database.order_search_hits(
+            [lead for lead in leads if database.lead_matches_search(lead, q)],
+            q,
+        )
     return leads
 
 

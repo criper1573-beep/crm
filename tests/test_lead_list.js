@@ -75,6 +75,57 @@ assert.deepStrictEqual(LeadList.leadRouteAction('', [15], 15), { type: 'list', i
 assert.deepStrictEqual(LeadList.leadRouteAction('#', [15], 15), { type: 'list', id: null });
 assert.deepStrictEqual(LeadList.leadRouteAction('#other', [15], 15), { type: 'ignore', id: null });
 
+assert.strictEqual(LeadList.parseSearchId('423'), 423);
+assert.strictEqual(LeadList.parseSearchId('#423'), 423);
+assert.strictEqual(LeadList.parseSearchId('  #423 '), 423);
+assert.strictEqual(LeadList.parseSearchId('#0423'), null);
+assert.strictEqual(LeadList.parseSearchId('0423'), null);
+assert.strictEqual(LeadList.parseSearchId('423a'), null);
+assert.strictEqual(LeadList.parseSearchId('#lead/423'), null);
+assert.strictEqual(LeadList.parseSearchId(''), null);
+
+const searchRows = [
+  { id: 5, name: '423', address: '', comment: '', created_at: '2026-10-01 00:00:00' },
+  { id: 423, name: 'Борис', address: '', comment: '', phone: '', created_at: '2020-01-01 00:00:00' },
+  { id: 9, name: 'Другой', address: 'дом 423', comment: '', created_at: '2026-08-01 00:00:00' },
+  { id: 8, name: 'Глеб #423', address: '', comment: 'заявка', created_at: '2026-09-01 00:00:00' },
+  { id: 11, name: 'Пётр', address: '', comment: '', phone: '423000', created_at: '2026-10-02 00:00:00' },
+  { id: 4230, name: 'Длинный', address: '', comment: '', created_at: '2026-07-01 00:00:00' },
+];
+
+assert.strictEqual(LeadList.leadMatchesSearch(searchRows[1], '423'), true);
+assert.strictEqual(LeadList.leadMatchesSearch(searchRows[1], '#423'), true);
+assert.strictEqual(LeadList.leadMatchesSearch(searchRows[1], '  #423 '), true);
+assert.strictEqual(LeadList.leadMatchesSearch(searchRows[0], '423'), true);
+assert.strictEqual(LeadList.leadMatchesSearch(searchRows[2], '423'), true);
+assert.strictEqual(LeadList.leadMatchesSearch(searchRows[3], '#423'), true);
+assert.strictEqual(LeadList.leadMatchesSearch(searchRows[2], '#423'), false);
+assert.strictEqual(LeadList.leadMatchesSearch(searchRows[4], '423'), false);
+assert.strictEqual(LeadList.leadMatchesSearch(searchRows[5], '423'), false);
+assert.strictEqual(LeadList.leadMatchesSearch({ id: 1, name: 'Анна' }, 'ан'), true);
+assert.strictEqual(LeadList.leadMatchesSearch({ id: 1, name: 'Анна', address: 'Ленина', comment: 'Срочно' }, 'ленина'), true);
+assert.strictEqual(LeadList.leadMatchesSearch({ id: 1, name: 'Анна', address: 'Ленина', comment: 'Срочно' }, 'СРОЧНО'), true);
+assert.strictEqual(LeadList.leadMatchesSearch({ id: 1, name: 'Анна' }, ''), true);
+
+const byNumber = searchRows.filter(function (row) { return LeadList.leadMatchesSearch(row, '423'); });
+const byNumberSorted = LeadList.orderSearchHits(LeadList.sortLeads(byNumber, 'created_desc'), '423');
+assert.deepStrictEqual(byNumberSorted.map(function (row) { return row.id; }), [423, 5, 8, 9]);
+assert.deepStrictEqual(
+  LeadList.orderSearchHits(LeadList.sortLeads(byNumber, 'created_desc'), '#423').map(function (row) { return row.id; }),
+  [423, 5, 8, 9]
+);
+const byName = searchRows.filter(function (row) { return LeadList.leadMatchesSearch(row, 'другой'); });
+assert.deepStrictEqual(
+  LeadList.orderSearchHits(LeadList.sortLeads(byName, 'created_desc'), 'другой').map(function (row) { return row.id; }),
+  [9]
+);
+assert.deepStrictEqual(
+  LeadList.orderSearchHits(LeadList.sortLeads(searchRows, 'created_asc'), '42').filter(function (row) {
+    return LeadList.leadMatchesSearch(row, '42');
+  }).map(function (row) { return row.id; }),
+  [9, 8, 5]
+);
+
 assert.strictEqual(LeadList.parseYmd('2.12.25'), '2025-12-02');
 assert.strictEqual(LeadList.parseYmd('02.12.2025'), '2025-12-02');
 assert.strictEqual(LeadList.parseYmd('2.12.25 12:00'), '2025-12-02');

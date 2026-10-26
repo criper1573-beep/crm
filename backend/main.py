@@ -18,6 +18,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 
 from backend import database
+from backend.lead_source import LeadSourceError, apply_to_lead
 from backend.models import Lead, LeadFile, LeadObjectCreate, NoteCreate, MessageCreate, MessageBulkItem, MessageDirectionUpdate, AvitoSendMessage, AvitoRegisterWebhook, PaymentCreate, PaymentUpdate
 from backend import grs_ai
 from backend import avito
@@ -251,8 +252,16 @@ def get_lead(lead_id: int):
     return lead
 
 
+def _reject_lead_source(exc: LeadSourceError) -> HTTPException:
+    return HTTPException(status_code=400, detail=exc.detail)
+
+
 @app.post("/api/leads")
 def create_lead(lead: Lead):
+    try:
+        apply_to_lead(lead, None)
+    except LeadSourceError as exc:
+        raise _reject_lead_source(exc) from exc
     new_id = database.create_lead(lead)
     created = database.get_lead_by_id(new_id)
     return created
@@ -260,9 +269,13 @@ def create_lead(lead: Lead):
 
 @app.put("/api/leads/{lead_id}")
 def update_lead(lead_id: int, lead: Lead):
-    if database.get_lead_by_id(lead_id) is None:
-        raise HTTPException(status_code=404, detail="Lead not found")
     prev = database.get_lead_by_id(lead_id)
+    if prev is None:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    try:
+        apply_to_lead(lead, prev)
+    except LeadSourceError as exc:
+        raise _reject_lead_source(exc) from exc
     database.update_lead(lead_id, lead)
     if getattr(lead, "has_multiple_objects", False) and not (prev and prev.get("has_multiple_objects")):
         objs = database.get_objects_by_lead_id(lead_id)
@@ -352,6 +365,26 @@ def analytics_revenue(
     if database._to_ymd(anchor) == "" and today:
         raise HTTPException(status_code=400, detail="Bad today")
     return database.analytics_summary(period, start, end, anchor)
+
+
+@app.get("/api/analytics/sources")
+def analytics_sources(
+    period: str = Query(default="month", description="week, month, prev_month, quarter, year, all, custom"),
+    start: str | None = Query(default=None, description="Начало для custom, YYYY-MM-DD"),
+    end: str | None = Query(default=None, description="Конец для custom, YYYY-MM-DD"),
+    today: str | None = Query(default=None, description="Опорная дата YYYY-MM-DD, по умолчанию сегодня"),
+):
+    """Лиды и договоры по источникам, отказы по причинам. Период — дата добавления лида (created_at).
+
+    Договор — статус client или repeat. Отказ — drain_mql, drain_sql, drain_hot.
+    """
+    if not database.known_period(period):
+        raise HTTPException(status_code=400, detail="Unknown period")
+    from datetime import date as _date
+    anchor = today or _date.today().isoformat()
+    if database._to_ymd(anchor) == "" and today:
+        raise HTTPException(status_code=400, detail="Bad today")
+    return database.attribution_report(period, start, end, anchor)
 
 
 @app.delete("/api/leads/{lead_id}")

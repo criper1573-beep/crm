@@ -2,6 +2,26 @@
 
 const BASE = typeof CONFIG !== 'undefined' ? CONFIG.api.base : '';
 
+function leadWriteErrorText(detail, statusText) {
+  const map = {
+    'rejection_reason is required': 'Укажите причину отказа',
+    'comment is required when rejection_reason is other': 'Для причины «другое» нужен комментарий',
+    'Unknown source': 'Неизвестный источник',
+    'Unknown rejection_reason': 'Неизвестная причина отказа',
+  };
+  if (detail && map[detail]) return map[detail];
+  if (typeof detail === 'string' && detail) return detail;
+  return statusText || 'Не удалось сохранить';
+}
+
+async function readErrorDetail(res) {
+  const body = await res.json().catch(() => ({}));
+  const detail = body && body.detail;
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail) && detail[0]) return detail[0].msg || String(detail[0]);
+  return '';
+}
+
 async function apiGetLeads() {
   try {
     const res = await fetch(`${BASE}/leads`);
@@ -31,7 +51,11 @@ async function apiCreateLead(data) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     });
-    if (!res.ok) throw new Error(res.statusText);
+    if (!res.ok) {
+      const detail = await readErrorDetail(res);
+      if (res.status === 400) alert(leadWriteErrorText(detail, res.statusText));
+      throw new Error(detail || res.statusText);
+    }
     return await res.json();
   } catch (e) {
     console.error('apiCreateLead:', e);
@@ -46,7 +70,11 @@ async function apiUpdateLead(id, data) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     });
-    if (!res.ok) throw new Error(res.statusText);
+    if (!res.ok) {
+      const detail = await readErrorDetail(res);
+      if (res.status === 400) alert(leadWriteErrorText(detail, res.statusText));
+      throw new Error(detail || res.statusText);
+    }
     return await res.json();
   } catch (e) {
     console.error('apiUpdateLead:', e);

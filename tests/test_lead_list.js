@@ -161,4 +161,27 @@ assert.deepStrictEqual(LeadList.countWon(sample, 'week', '', '', today), { clien
 assert.strictEqual(LeadList.sumDealAmounts(sample, 'week', '', '', today), 130000);
 assert.strictEqual(LeadList.sumPayments(sample, 'custom', '2025-12-01', '2025-12-31', today), 5000);
 
+const sources = { avito: 'Авито', telegram: 'Telegram' };
+const reasons = { price: 'дорого/нашли дешевле', other: 'другое' };
+const report = LeadList.attributionReport([
+  { source: 'avito', status: 'client' },
+  { source: 'avito', status: 'drain_sql', rejection_reason: 'price' },
+  { source: '', status: 'lead' },
+  { source: 'telegram', status: 'repeat' },
+  { source: 'telegram', status: 'drain_hot', rejection_reason: '' },
+], sources, reasons);
+assert.strictEqual(report.leadsTotal, 5);
+assert.strictEqual(report.contractsTotal, 2);
+assert.strictEqual(report.rejectionsTotal, 2);
+assert.deepStrictEqual(report.leadsBySource.map(function (row) { return [row.source, row.leads, row.contracts]; }), [
+  ['avito', 2, 1],
+  ['telegram', 2, 1],
+  ['', 1, 0],
+]);
+assert.deepStrictEqual(report.rejectionsByReason.map(function (row) { return [row.reason, row.count]; }), [
+  ['price', 1],
+  ['other', 0],
+  ['', 1],
+]);
+
 console.log('lead-list ok');

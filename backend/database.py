@@ -6,6 +6,7 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 
+from backend.lead_source import attribution_counts
 from backend.models import Lead, LeadObject, LeadObjectCreate, NoteCreate, MessageCreate, MessageBulkItem
 
 # Путь к БД относительно корня проекта
@@ -34,6 +35,8 @@ def init_db() -> None:
                 object_type TEXT NOT NULL,
                 budget TEXT NOT NULL,
                 status TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT '',
+                rejection_reason TEXT NOT NULL DEFAULT '',
                 last_contact TEXT NOT NULL DEFAULT '',
                 comment TEXT NOT NULL DEFAULT '',
                 work_types TEXT NOT NULL DEFAULT '[]',
@@ -61,6 +64,10 @@ def init_db() -> None:
             conn.execute("ALTER TABLE leads ADD COLUMN tg_link TEXT NOT NULL DEFAULT ''")
         if "has_multiple_objects" not in cols:
             conn.execute("ALTER TABLE leads ADD COLUMN has_multiple_objects INTEGER NOT NULL DEFAULT 0")
+        if "source" not in cols:
+            conn.execute("ALTER TABLE leads ADD COLUMN source TEXT NOT NULL DEFAULT ''")
+        if "rejection_reason" not in cols:
+            conn.execute("ALTER TABLE leads ADD COLUMN rejection_reason TEXT NOT NULL DEFAULT ''")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS lead_objects (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -167,6 +174,8 @@ def _lead_row_to_dict(row: sqlite3.Row) -> dict:
         d["avito_new_chat"] = bool(int(d["avito_new_chat"]))
     if "avito_chat_id" not in d:
         d["avito_chat_id"] = None
+    d["source"] = str(d.get("source") or "")
+    d["rejection_reason"] = str(d.get("rejection_reason") or "")
     return d
 
 
@@ -203,7 +212,7 @@ def _get_last_message_per_lead() -> dict[int, dict]:
 def get_all_leads() -> list[dict]:
     with get_connection() as conn:
         cur = conn.execute(
-            "SELECT id, name, phone, extra_phones, avito_link, max_link, tg_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, communication_done, has_multiple_objects, avito_chat_id, avito_new_chat, created_at FROM leads ORDER BY id"
+            "SELECT id, name, phone, extra_phones, avito_link, max_link, tg_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, communication_done, has_multiple_objects, avito_chat_id, avito_new_chat, source, rejection_reason, created_at FROM leads ORDER BY id"
         )
         leads_list = [_lead_row_to_dict(r) for r in cur.fetchall()]
     last_msgs = _get_last_message_per_lead()
@@ -325,7 +334,7 @@ def sort_leads(leads: list[dict], mode: str) -> list[dict]:
 def get_lead_by_id(lead_id: int) -> dict | None:
     with get_connection() as conn:
         cur = conn.execute(
-            "SELECT id, name, phone, extra_phones, avito_link, max_link, tg_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, communication_done, has_multiple_objects, avito_chat_id, avito_new_chat, created_at FROM leads WHERE id = ?",
+            "SELECT id, name, phone, extra_phones, avito_link, max_link, tg_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, communication_done, has_multiple_objects, avito_chat_id, avito_new_chat, source, rejection_reason, created_at FROM leads WHERE id = ?",
             (lead_id,),
         )
         row = cur.fetchone()
@@ -339,11 +348,13 @@ def create_lead(lead: Lead) -> int:
     has_multi = 1 if getattr(lead, "has_multiple_objects", False) else 0
     avito_chat_id = getattr(lead, "avito_chat_id", None)
     avito_new_chat = 1 if getattr(lead, "avito_new_chat", False) else 0
+    source = getattr(lead, "source", "") or ""
+    rejection_reason = getattr(lead, "rejection_reason", "") or ""
     with get_connection() as conn:
         deal_amount = getattr(lead, "deal_amount", None)
         cur = conn.execute(
-            """INSERT INTO leads (name, phone, extra_phones, avito_link, max_link, tg_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, communication_done, has_multiple_objects, avito_chat_id, avito_new_chat)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO leads (name, phone, extra_phones, avito_link, max_link, tg_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, communication_done, has_multiple_objects, avito_chat_id, avito_new_chat, source, rejection_reason)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 lead.name,
                 lead.phone,
@@ -364,6 +375,8 @@ def create_lead(lead: Lead) -> int:
                 has_multi,
                 avito_chat_id,
                 avito_new_chat,
+                source,
+                rejection_reason,
             ),
         )
         conn.commit()
@@ -376,11 +389,14 @@ def update_lead(lead_id: int, lead: Lead) -> bool:
     deal_amount = getattr(lead, "deal_amount", None)
     comm_done = 1 if getattr(lead, "communication_done", False) else 0
     has_multi = 1 if getattr(lead, "has_multiple_objects", False) else 0
+    source = getattr(lead, "source", "") or ""
+    rejection_reason = getattr(lead, "rejection_reason", "") or ""
     with get_connection() as conn:
         cur = conn.execute(
             """UPDATE leads SET
                 name = ?, phone = ?, extra_phones = ?, avito_link = ?, max_link = ?, tg_link = ?, address = ?, object_type = ?, budget = ?, status = ?,
-                last_contact = ?, comment = ?, work_types = ?, description = ?, deal_amount = ?, communication_done = ?, has_multiple_objects = ?
+                last_contact = ?, comment = ?, work_types = ?, description = ?, deal_amount = ?, communication_done = ?, has_multiple_objects = ?,
+                source = ?, rejection_reason = ?
                WHERE id = ?""",
             (
                 lead.name,
@@ -400,6 +416,8 @@ def update_lead(lead_id: int, lead: Lead) -> bool:
                 deal_amount,
                 comm_done,
                 has_multi,
+                source,
+                rejection_reason,
                 lead_id,
             ),
         )
@@ -649,7 +667,7 @@ def get_lead_by_avito_chat_id(avito_chat_id: str) -> dict | None:
     """Найти лид по ID чата Авито."""
     with get_connection() as conn:
         cur = conn.execute(
-            "SELECT id, name, phone, extra_phones, avito_link, max_link, tg_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, communication_done, has_multiple_objects, avito_chat_id, avito_new_chat, created_at FROM leads WHERE avito_chat_id = ?",
+            "SELECT id, name, phone, extra_phones, avito_link, max_link, tg_link, address, object_type, budget, status, last_contact, comment, work_types, description, deal_amount, communication_done, has_multiple_objects, avito_chat_id, avito_new_chat, source, rejection_reason, created_at FROM leads WHERE avito_chat_id = ?",
             (avito_chat_id,),
         )
         row = cur.fetchone()
@@ -662,8 +680,8 @@ def create_avito_lead(avito_chat_id: str, name: str = "", avito_link: str = "") 
         cur = conn.execute(
             """INSERT INTO leads (name, phone, avito_link, address, object_type, budget, status,
                work_types, description, communication_done, has_multiple_objects,
-               avito_chat_id, avito_new_chat)
-               VALUES (?, '', ?, '', 'Квартира', 'lo', 'lead', '[]', '', 0, 0, ?, 1)""",
+               avito_chat_id, avito_new_chat, source)
+               VALUES (?, '', ?, '', 'Квартира', 'lo', 'lead', '[]', '', 0, 0, ?, 1, 'avito')""",
             (name or "Авито клиент", avito_link or "", avito_chat_id),
         )
         conn.commit()
@@ -1071,6 +1089,24 @@ def analytics_summary(period: str | None, start: str | None, end: str | None, to
     }
 
 
+def attribution_report(period: str | None, start: str | None, end: str | None, today: str) -> dict:
+    """Лиды и договоры по источникам, отказы по причинам. Период — дата добавления лида.
+
+    Договор: статус client или repeat. Отказ: любой статус слива. «Всё время» включает лиды без даты.
+    """
+    key = canonical_period(period)
+    range_start, range_end = period_range(period, start, end, today)
+    chosen = []
+    for lead in get_all_leads():
+        if key == "all" or _in_range(_to_ymd(lead.get("created_at")), range_start, range_end):
+            chosen.append(lead)
+    report = attribution_counts(chosen)
+    report["period"] = key
+    report["start"] = range_start
+    report["end"] = range_end
+    return report
+
+
 def sync_created_at_from_last_contact() -> int:
     """
     Проставляет created_at: из last_contact, при пустом — из даты последнего сообщения.
@@ -1281,7 +1317,7 @@ def export_leads(since: str | None, include: frozenset[str]) -> list[dict]:
             SELECT id, name, phone, extra_phones, avito_link, max_link, tg_link, address,
                    object_type, budget, status, last_contact, comment, work_types, description,
                    deal_amount, communication_done, has_multiple_objects, avito_chat_id,
-                   avito_new_chat, created_at, updated_at
+                   avito_new_chat, source, rejection_reason, created_at, updated_at
             FROM leads ORDER BY id
             """
         ).fetchall()

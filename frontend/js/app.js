@@ -94,6 +94,8 @@ function getLeadPayloadForUpdate(l, overrides = {}) {
     object_type: l.object_type ?? l.obj ?? '',
     budget: l.budget,
     status: l.status,
+    source: l.source || '',
+    rejection_reason: l.rejection_reason || '',
     last_contact: l.last_contact ?? l.date ?? '',
     comment: l.comment || '',
     work_types: Array.isArray(l.work_types) ? l.work_types : (l.work_types ? JSON.parse(l.work_types || '[]') : []),
@@ -112,6 +114,98 @@ function escapeHtml(s) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+function isDrainStatus(status) {
+  return String(status || '').indexOf('drain') === 0;
+}
+
+function rejectionReady(lead) {
+  const reason = (lead && lead.rejection_reason) || '';
+  if (!reason || !(CONFIG.rejectionReasons && CONFIG.rejectionReasons[reason])) return false;
+  if (reason === 'other' && !String(lead.comment || '').trim()) return false;
+  return true;
+}
+
+function sourceOptionsHtml(current) {
+  const cur = current || '';
+  const head = `<option value=""${cur ? '' : ' selected'}>Не указан</option>`;
+  const rest = Object.entries(CONFIG.sources || {}).map(([k, label]) =>
+    `<option value="${escapeHtml(k)}"${cur === k ? ' selected' : ''}>${escapeHtml(label)}</option>`
+  ).join('');
+  return head + rest;
+}
+
+function reasonOptionsHtml(current, placeholder) {
+  const cur = current || '';
+  const head = `<option value=""${cur ? '' : ' selected'}>${escapeHtml(placeholder || 'Не указана')}</option>`;
+  const rest = Object.entries(CONFIG.rejectionReasons || {}).map(([k, label]) =>
+    `<option value="${escapeHtml(k)}"${cur === k ? ' selected' : ''}>${escapeHtml(label)}</option>`
+  ).join('');
+  return head + rest;
+}
+
+let rejectionPromptResolve = null;
+
+function askRejection(lead) {
+  const overlay = document.getElementById('rejectOverlay');
+  const select = document.getElementById('rejectReason');
+  const comment = document.getElementById('rejectComment');
+  const error = document.getElementById('rejectError');
+  if (!overlay || !select || !comment) return Promise.resolve(null);
+  select.innerHTML = Object.entries(CONFIG.rejectionReasons || {}).map(([k, label]) =>
+    `<option value="${escapeHtml(k)}">${escapeHtml(label)}</option>`
+  ).join('');
+  const preset = lead && CONFIG.rejectionReasons && CONFIG.rejectionReasons[lead.rejection_reason] ? lead.rejection_reason : '';
+  select.value = preset || (select.options[0] ? select.options[0].value : '');
+  comment.value = (lead && lead.comment) || '';
+  if (error) { error.hidden = true; error.textContent = ''; }
+  syncRejectCommentField();
+  overlay.style.display = 'flex';
+  return new Promise((resolve) => { rejectionPromptResolve = resolve; });
+}
+
+function syncRejectCommentField() {
+  const select = document.getElementById('rejectReason');
+  const label = document.getElementById('rejectCommentLabel');
+  if (!select || !label) return;
+  const other = select.value === 'other';
+  label.innerHTML = other ? 'Комментарий <span class="nlf-req">*</span>' : 'Комментарий';
+}
+
+function closeRejectOverlay() {
+  rejectionPromptResolve = null;
+  const overlay = document.getElementById('rejectOverlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+function confirmReject() {
+  const select = document.getElementById('rejectReason');
+  const commentEl = document.getElementById('rejectComment');
+  const error = document.getElementById('rejectError');
+  const reason = select ? select.value : '';
+  const comment = commentEl ? commentEl.value.trim() : '';
+  if (!reason) {
+    if (error) { error.hidden = false; error.textContent = 'Укажите причину отказа'; }
+    return;
+  }
+  if (reason === 'other' && !comment) {
+    if (error) { error.hidden = false; error.textContent = 'Для причины «другое» нужен комментарий'; }
+    return;
+  }
+  const resolve = rejectionPromptResolve;
+  closeRejectOverlay();
+  if (resolve) {
+    const result = { rejection_reason: reason };
+    if (reason === 'other') result.comment = comment;
+    resolve(result);
+  }
+}
+
+function cancelReject() {
+  const resolve = rejectionPromptResolve;
+  closeRejectOverlay();
+  if (resolve) resolve(null);
 }
 
 function normalizeTgLink(s) {
@@ -148,6 +242,7 @@ function toggleNewLeadForm() {
     wrap.style.display = 'block';
     fillNewLeadFormSelects();
     document.getElementById('newLeadForm').reset();
+    syncNewLeadRejectFields();
   } else {
     wrap.style.display = 'none';
   }
@@ -161,11 +256,34 @@ function fillNewLeadFormSelects() {
   objSelect.innerHTML = CONFIG.objectTypes.map(t => `<option value="${t}">${t}</option>`).join('');
   budgetSelect.innerHTML = Object.entries(CONFIG.budgets).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('');
   statusSelect.innerHTML = Object.entries(CONFIG.statuses).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('');
+  const sourceSelect = document.getElementById('newLeadSource');
+  const reasonSelect = document.getElementById('newLeadReject');
+  if (sourceSelect) sourceSelect.innerHTML = sourceOptionsHtml('');
+  if (reasonSelect) reasonSelect.innerHTML = reasonOptionsHtml('', 'Выберите причину');
+  syncNewLeadRejectFields();
+}
+
+function syncNewLeadRejectFields() {
+  const status = document.getElementById('newLeadStatus');
+  const wrap = document.getElementById('newLeadRejectWrap');
+  if (!wrap || !status) return;
+  wrap.hidden = !isDrainStatus(status.value);
 }
 
 async function submitNewLeadForm(e) {
   e.preventDefault();
   const form = e.target;
+  const status = form.status.value;
+  const comment = (form.comment.value || '').trim();
+  const rejection_reason = isDrainStatus(status) && form.rejection_reason ? form.rejection_reason.value : '';
+  if (isDrainStatus(status) && !rejection_reason) {
+    alert('Укажите причину отказа');
+    return false;
+  }
+  if (rejection_reason === 'other' && !comment) {
+    alert('Для причины «другое» нужен комментарий');
+    return false;
+  }
   const data = {
     name: form.name.value.trim(),
     phone: (form.phone.value || '').trim(),
@@ -173,9 +291,11 @@ async function submitNewLeadForm(e) {
     address: (form.address.value || '').trim(),
     object_type: form.object_type.value,
     budget: form.budget.value,
-    status: form.status.value,
+    status: status,
+    source: form.source ? form.source.value : '',
+    rejection_reason: rejection_reason,
     last_contact: '',
-    comment: (form.comment.value || '').trim(),
+    comment: comment,
   };
   if (!data.name) return false;
   const created = await apiCreateLead(data);
@@ -421,10 +541,18 @@ async function selectStatus(id, newStatus, e) {
   if (menu) menu.style.display = 'none';
   const l = leads.find(x => x.id === id);
   if (!l) return;
-  const payload = getLeadPayloadForUpdate(l, { status: newStatus });
+  let extra = {};
+  if (isDrainStatus(newStatus) && !isDrainStatus(l.status) && !rejectionReady(l)) {
+    const picked = await askRejection(l);
+    if (!picked) return;
+    extra = picked;
+  }
+  const payload = getLeadPayloadForUpdate(l, Object.assign({ status: newStatus }, extra));
   const updated = await apiUpdateLead(id, payload);
   if (!updated) return;
   l.status = newStatus;
+  if (extra.rejection_reason) l.rejection_reason = extra.rejection_reason;
+  if (extra.comment != null) l.comment = extra.comment;
   updateStatusInUI(id, newStatus);
 }
 
@@ -612,6 +740,24 @@ function getStatusInfo(s) {
 }
 
 // ─── STATS ─────────────────────────────────────────────────
+function renderAttributionReport(rows) {
+  const el = document.getElementById('attributionReport');
+  if (!el || typeof LeadList === 'undefined' || !LeadList.attributionReport) return;
+  const report = LeadList.attributionReport(rows, (CONFIG && CONFIG.sources) || {}, (CONFIG && CONFIG.rejectionReasons) || {});
+  const sourcesHtml = report.leadsBySource.filter(row => row.leads || row.contracts).map(row =>
+    `<div class="attr-row"><span>${escapeHtml(row.label)}</span><span>лиды ${row.leads} · договоры ${row.contracts}</span></div>`
+  ).join('') || '<div class="empty-inline">Нет лидов за период</div>';
+  const reasonsHtml = report.rejectionsByReason.filter(row => row.count).map(row =>
+    `<div class="attr-row"><span>${escapeHtml(row.label)}</span><span>${row.count}</span></div>`
+  ).join('') || '<div class="empty-inline">Нет отказов за период</div>';
+  el.innerHTML =
+    `<div class="attr-total">Лиды ${report.leadsTotal} · договоры ${report.contractsTotal}</div>` +
+    sourcesHtml +
+    `<div class="rp-sec attr-subhead">Отказы</div>` +
+    `<div class="attr-total">Всего ${report.rejectionsTotal}</div>` +
+    reasonsHtml;
+}
+
 function updateStats() {
   const leadsForPeriod = getLeadsForPeriod();
   const periodGroups = {hot:0,client:0,repeat:0,drain:0,sql:0};
@@ -632,6 +778,7 @@ function updateStats() {
   if (revenueEl) revenueEl.textContent = formatDealAmount(revenue) || ('0\u00A0₽');
   const dealsEl = document.getElementById('dealsTotal');
   if (dealsEl) dealsEl.textContent = formatDealAmount(deals) || ('0\u00A0₽');
+  renderAttributionReport(leadsForPeriod);
 
   // funnel in sidebar: counts by selected period (same as analytics)
   const sfl = document.getElementById('sidebarFunnelList');
@@ -1099,7 +1246,13 @@ async function saveHeaderEdit(leadId) {
   const tg_link = (document.getElementById('headerEditTg') && document.getElementById('headerEditTg').value || '').trim();
   const statusEl = document.getElementById('headerEditStatus');
   const status = statusEl ? statusEl.value : l.status;
-  const payload = getLeadPayloadForUpdate(l, { name: name || l.name, phone, avito_link, max_link, tg_link, status });
+  let extra = {};
+  if (isDrainStatus(status) && !isDrainStatus(l.status) && !rejectionReady(l)) {
+    const picked = await askRejection(l);
+    if (!picked) return;
+    extra = picked;
+  }
+  const payload = getLeadPayloadForUpdate(l, Object.assign({ name: name || l.name, phone, avito_link, max_link, tg_link, status }, extra));
   const updated = await apiUpdateLead(leadId, payload);
   if (updated) {
     l.name = payload.name;
@@ -1108,6 +1261,8 @@ async function saveHeaderEdit(leadId) {
     l.max_link = payload.max_link;
     l.tg_link = payload.tg_link;
     l.status = payload.status;
+    if (extra.rejection_reason) l.rejection_reason = extra.rejection_reason;
+    if (extra.comment != null) l.comment = extra.comment;
     l.link = payload.avito_link;
     headerEditMode = false;
     renderDetail();
@@ -1367,6 +1522,73 @@ function startEditLeadName(leadId) {
   input.addEventListener('keydown', onKeyDown);
 }
 
+async function saveLeadSource(leadId, value) {
+  const l = leads.find(x => x.id === leadId);
+  if (!l) return;
+  const payload = getLeadPayloadForUpdate(l, { source: value });
+  const updated = await apiUpdateLead(leadId, payload);
+  if (updated) {
+    l.source = value;
+    showSaveIndicator('cardField-' + leadId + '-source');
+    updateStats();
+  } else {
+    renderDetail();
+  }
+}
+
+async function saveLeadRejection(leadId, value) {
+  const l = leads.find(x => x.id === leadId);
+  if (!l) return;
+  if (isDrainStatus(l.status) && !value) {
+    alert('Укажите причину отказа');
+    renderDetail();
+    return;
+  }
+  if (value === 'other' && !String(l.comment || '').trim()) {
+    const picked = await askRejection(Object.assign({}, l, { rejection_reason: 'other' }));
+    if (!picked) { renderDetail(); return; }
+    const payload = getLeadPayloadForUpdate(l, picked);
+    const updated = await apiUpdateLead(leadId, payload);
+    if (updated) {
+      l.rejection_reason = picked.rejection_reason;
+      if (picked.comment != null) l.comment = picked.comment;
+      updateStats();
+    }
+    renderDetail();
+    return;
+  }
+  const payload = getLeadPayloadForUpdate(l, { rejection_reason: value });
+  const updated = await apiUpdateLead(leadId, payload);
+  if (updated) {
+    l.rejection_reason = value;
+    showSaveIndicator('cardField-' + leadId + '-rejection_reason');
+    updateStats();
+    if (value === 'other') renderDetail();
+  } else {
+    renderDetail();
+  }
+}
+
+async function saveRejectionComment(leadId, value) {
+  const l = leads.find(x => x.id === leadId);
+  if (!l) return;
+  const trimmed = String(value || '').trim();
+  if ((l.rejection_reason || '') === 'other' && !trimmed) {
+    alert('Для причины «другое» нужен комментарий');
+    renderDetail();
+    return;
+  }
+  if (trimmed === (l.comment || '')) return;
+  const payload = getLeadPayloadForUpdate(l, { comment: trimmed });
+  const updated = await apiUpdateLead(leadId, payload);
+  if (updated) {
+    l.comment = trimmed;
+    showSaveIndicator('cardField-' + leadId + '-rejection-comment');
+  } else {
+    renderDetail();
+  }
+}
+
 async function updateLeadField(leadId, field, value) {
   const l = leads.find(x => x.id === leadId);
   if (!l) return;
@@ -1514,7 +1736,20 @@ function renderOverview(l) {
       ${l.objects.length > 1 ? `<button type="button" class="dbtn object-card-delete" onclick="deleteOverviewObject(${leadId}, ${objectId})" title="Удалить объект">Удалить объект</button>` : ''}
     </div>
   ` : '';
+  const rejectionComment = l.rejection_reason === 'other'
+    ? `<div class="ai-field" id="cardField-${l.id}-rejection-comment" style="grid-column:1 / -1"><div class="aif-label">Комментарий к отказу</div><textarea class="aif-edit-input" rows="2" onblur="saveRejectionComment(${l.id}, this.value)">${escapeHtml(l.comment || '')}</textarea></div>`
+    : '';
+  const leadMeta = `
+    <div class="ai-card lead-card-block">
+      <div class="ai-label">ЛИД</div>
+      <div class="ai-grid">
+        <div class="ai-field" id="cardField-${l.id}-source"><div class="aif-label">Источник</div><select class="aif-edit-select" onchange="saveLeadSource(${l.id}, this.value)">${sourceOptionsHtml(l.source)}</select></div>
+        <div class="ai-field" id="cardField-${l.id}-rejection_reason"><div class="aif-label">Причина отказа${isDrainStatus(l.status) ? ' *' : ''}</div><select class="aif-edit-select" onchange="saveLeadRejection(${l.id}, this.value)">${reasonOptionsHtml(l.rejection_reason)}</select></div>
+        ${rejectionComment}
+      </div>
+    </div>`;
   return `
+    ${leadMeta}
     ${objSwitcher}
     <div class="ai-card lead-card-block">
       <div class="ai-label">КАРТОЧКА ОБЪЕКТА</div>
@@ -2129,6 +2364,11 @@ async function init() {
   });
   document.addEventListener('keydown', function onEscape(e) {
     if (e.key !== 'Escape') return;
+    const rejectOverlay = document.getElementById('rejectOverlay');
+    if (rejectOverlay && rejectOverlay.style.display !== 'none') {
+      cancelReject();
+      return;
+    }
     const overlay = document.getElementById('csvImportOverlay');
     if (overlay && overlay.style.display !== 'none') {
       toggleCsvImportModal();

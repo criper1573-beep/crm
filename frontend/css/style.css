@@ -1054,6 +1054,19 @@ input[type="file"] { min-height: 0; }
 .budget-fill-mid { background: var(--ink); }
 .budget-fill-lo { background: var(--muted); }
 
+.attr-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line);
+}
+.attr-row span:last-child { color: var(--muted); font-weight: 600; white-space: nowrap; text-align: right; }
+.attr-total { margin: 4px 0 6px; font-size: 12px; color: var(--muted); }
+.attr-subhead { margin-top: 12px; }
+.reject-error { color: var(--hot); margin: 8px 0 0; font-size: 13px; }
+
 .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .stat-box { padding: 12px 8px; text-align: center; }
 .stat-val {

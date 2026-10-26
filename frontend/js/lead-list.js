@@ -298,6 +298,80 @@
     return head.concat(tail);
   }
 
+  function attributionReport(leads, sources, reasons) {
+    sources = sources || {};
+    reasons = reasons || {};
+    var leadCounts = {};
+    var contractCounts = {};
+    var reasonCounts = {};
+    var leadsTotal = 0;
+    var contractsTotal = 0;
+    var rejectionsTotal = 0;
+    (leads || []).forEach(function (lead) {
+      leadsTotal += 1;
+      var source = lead && lead.source ? String(lead.source) : '';
+      leadCounts[source] = (leadCounts[source] || 0) + 1;
+      if (lead && (lead.status === 'client' || lead.status === 'repeat')) {
+        contractsTotal += 1;
+        contractCounts[source] = (contractCounts[source] || 0) + 1;
+      }
+      var status = lead && lead.status ? String(lead.status) : '';
+      if (status.indexOf('drain') === 0) {
+        rejectionsTotal += 1;
+        var reason = lead.rejection_reason ? String(lead.rejection_reason) : '';
+        reasonCounts[reason] = (reasonCounts[reason] || 0) + 1;
+      }
+    });
+    var sourceRows = [];
+    var seenSources = {};
+    Object.keys(sources).forEach(function (key) {
+      seenSources[key] = true;
+      sourceRows.push({
+        source: key,
+        label: sources[key],
+        leads: leadCounts[key] || 0,
+        contracts: contractCounts[key] || 0,
+      });
+    });
+    Object.keys(leadCounts).sort().forEach(function (key) {
+      if (!key || seenSources[key]) return;
+      sourceRows.push({
+        source: key,
+        label: key,
+        leads: leadCounts[key] || 0,
+        contracts: contractCounts[key] || 0,
+      });
+    });
+    if (leadCounts['']) {
+      sourceRows.push({
+        source: '',
+        label: 'не указан',
+        leads: leadCounts[''],
+        contracts: contractCounts[''] || 0,
+      });
+    }
+    var reasonRows = [];
+    var seenReasons = {};
+    Object.keys(reasons).forEach(function (key) {
+      seenReasons[key] = true;
+      reasonRows.push({ reason: key, label: reasons[key], count: reasonCounts[key] || 0 });
+    });
+    Object.keys(reasonCounts).sort().forEach(function (key) {
+      if (!key || seenReasons[key]) return;
+      reasonRows.push({ reason: key, label: key, count: reasonCounts[key] });
+    });
+    if (reasonCounts['']) {
+      reasonRows.push({ reason: '', label: 'не указана', count: reasonCounts[''] });
+    }
+    return {
+      leadsBySource: sourceRows,
+      rejectionsByReason: reasonRows,
+      leadsTotal: leadsTotal,
+      contractsTotal: contractsTotal,
+      rejectionsTotal: rejectionsTotal,
+    };
+  }
+
   function leadRouteAction(hash, knownIds, activeId) {
     var id = parseLeadHash(hash);
     if (id != null) {
@@ -339,5 +413,6 @@
     parseSearchId: parseSearchId,
     leadMatchesSearch: leadMatchesSearch,
     orderSearchHits: orderSearchHits,
+    attributionReport: attributionReport,
   };
 });

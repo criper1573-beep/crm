@@ -19,8 +19,29 @@ class Lead(BaseModel):
     object_type: str = Field(..., description="Тип объекта")
     budget: str = Field(..., description="Бюджет")
     status: LeadStatus = Field(..., description="Статус лида")
+    source: str | None = Field(
+        default=None,
+        description=(
+            "Источник: avito (Авито), remontfranchiz (сайт ремонтфраншиз.рф), "
+            "flowcabinet (flowcabinet.ru), telegram (Telegram), referral (рекомендация/сарафан), "
+            "repeat_client (повторный клиент), tender (тендер/генподрядчик), other (другое). "
+            "Пусто или null — не указан. На PUT, если поле не передано, значение не затирается."
+        ),
+    )
+    rejection_reason: str | None = Field(
+        default=None,
+        description=(
+            "Причина отказа: price (дорого/нашли дешевле), timing (сроки), "
+            "not_our_profile (не наш профиль работ), small_volume (маленький объём), "
+            "no_response (клиент пропал/не отвечает), postponed (отложили проект), "
+            "other_contractor (выбрали другого подрядчика не по цене), other (другое). "
+            "Обязательна при переводе в drain_mql, drain_sql или drain_hot. "
+            "Для other обязателен непустой comment. "
+            "На PUT, если поле не передано, значение не затирается."
+        ),
+    )
     last_contact: str = Field(default="", description="Дата последнего контакта")
-    comment: str = Field(default="", description="Комментарий")
+    comment: str = Field(default="", description="Комментарий. Обязателен, если rejection_reason=other")
     work_types: list[str] = Field(default_factory=list, description="Виды работ — JSON-массив строк")
     description: str = Field(default="", description="Текстовое описание проекта")
     deal_amount: int | None = Field(default=None, description="Сумма сделки в рублях, может быть пустым")

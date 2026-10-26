@@ -28,6 +28,29 @@ const CONFIG = {
 
   workTypes: ['Перегородки', 'Потолки', 'Облицовка', 'Демонтаж', 'Малярные работы', 'Изделия', 'Под ключ'],
 
+  // Коды совпадают с API. Подписи — как в backend/lead_source.py.
+  sources: {
+    avito: 'Авито',
+    remontfranchiz: 'сайт ремонтфраншиз.рф',
+    flowcabinet: 'flowcabinet.ru',
+    telegram: 'Telegram',
+    referral: 'рекомендация/сарафан',
+    repeat_client: 'повторный клиент',
+    tender: 'тендер/генподрядчик',
+    other: 'другое',
+  },
+
+  rejectionReasons: {
+    price: 'дорого/нашли дешевле',
+    timing: 'сроки',
+    not_our_profile: 'не наш профиль работ',
+    small_volume: 'маленький объём',
+    no_response: 'клиент пропал/не отвечает',
+    postponed: 'отложили проект',
+    other_contractor: 'выбрали другого подрядчика не по цене',
+    other: 'другое',
+  },
+
   messageSources: ['Авито', 'Телеграм', 'WhatsApp', 'Телефон'],
 
   telegram_username: 'Алексей',

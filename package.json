@@ -1,0 +1,8 @@
+{
+  "name": "flow-crm",
+  "private": true,
+  "description": "Команда проверки. Зависимостей нет.",
+  "scripts": {
+    "verify": "bash scripts/verify.sh"
+  }
+}
